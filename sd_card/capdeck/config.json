@@ -1,0 +1,35 @@
+{
+  "_readme": "CapDeck config. Edit on a computer, save, reboot the Cardputer.",
+  "nickname": "Cardputer",
+  "timezone": "EST5EDT,M3.2.0,M11.1.0",
+  "wifi": [
+    { "ssid": "YourNetwork", "pass": "YourPassword" }
+  ],
+  "home_assistant": {
+    "url": "http://homeassistant.local:8123",
+    "token": "PASTE_LONG_LIVED_ACCESS_TOKEN_HERE",
+    "pipeline": "",
+    "tts_engine": "tts.piper",
+    "agent_id": ""
+  },
+  "local_ai": {
+    "url": "http://192.168.1.100:8080",
+    "model": "",
+    "api_key": "",
+    "system": "You are a helpful assistant answering on a tiny handheld screen. Keep replies short and plain-text."
+  },
+  "ha_buttons": [
+    { "name": "Bedroom lights", "service": "light.toggle", "entity": "light.bedroom" },
+    { "name": "Fish tank plug", "service": "switch.toggle", "entity": "switch.fish_tank" },
+    { "name": "Movie scene", "service": "scene.turn_on", "entity": "scene.movie" },
+    { "name": "Webhook test", "webhook": "capdeck_test" }
+  ],
+  "lora": {
+    "freq_mhz": 915.0,
+    "bw_khz": 125.0,
+    "sf": 9,
+    "cr": 7,
+    "sync_word": 18,
+    "power_dbm": 17
+  }
+}

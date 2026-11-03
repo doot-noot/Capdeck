@@ -1,74 +1,90 @@
-# Capdeck
-Cardputer ADV firmware: Home Assistant voice + buttons, LoRa, GPS, IR, 433 MHz and a file manager behind an icon menu.
+# CapDeck — custom firmware for the M5Stack Cardputer ADV
 
-[README.md](https://github.com/user-attachments/files/34321685/README.md)
-# CapDeck v1.0.0 — custom firmware for the M5Stack Cardputer ADV
+![main menu](screenshots/main_menu.png) ![cyber theme](screenshots/theme_cyber.png)
 
-A Bruce-style scrolling icon menu with seven apps, each with its own icon:
+A Bruce-style icon carousel with ten apps, built-in themes, and a Wi-Fi portal so you can set it up
+from your phone instead of pulling the SD card.
+
+**Current version: 1.1.0** · [Changelog](CHANGELOG.md) · Download everything: [CapDeck-v1.1.0.zip](CapDeck-v1.1.0.zip)
 
 | # | App | What it does |
 |---|-----|--------------|
-| 1 | **Home Assistant** | Trigger deck (buttons from config, shows live on/off state, clear OK/FAILED notice), **push-to-talk Assist** (hold SPACE or G0), typed Assist chat, connection check |
-| 2 | **LoRa** | Chat between CapDecks on the Cap LoRa-1262, packet monitor with signal meter, ping, radio settings. Incoming messages beep and show an envelope from any screen |
-| 3 | **GPS** | Cap GPS fix, satellite radar, lat/lon/alt/speed, save waypoints to CSV. Also sets the clock automatically |
-| 4 | **Infrared** | Sends signals from Flipper Zero `.ir` files (raw + NEC, NECext, Samsung32, SIRC, RC5/RC5X, RC6), single button or sweep |
-| 5 | **RF 433** | Decodes fixed-code remotes from an RX470C, live logic scope, saved codes, optional forward to an HA webhook, replay if you add a transmitter |
-| 6 | **Files** | SD card browser: view text/hex, rename, delete, new folder, open `.ir` files straight into Infrared |
-| 7 | **Config** | Big 7-segment clock, battery meter + voltage graph, Wi-Fi scan/connect, brightness/accent colour/dim timer, sound/volume, system info, back to M5Launcher, sleep, reboot |
+| 1 | **Home Assistant** | Button deck with live on/off states and OK/FAILED notices, **push-to-talk Assist** (hold SPACE or G0), typed Assist chat |
+| 2 | **Local AI** | Chat with your own model through any OpenAI-compatible server (llama.cpp `llama-server`, Ollama, LM Studio) |
+| 3 | **LoRa** | CapDeck-to-CapDeck chat, packet monitor, ping, **scanner** (902–928 MHz spectrum + waterfall, LoRa activity hunter) |
+| 4 | **Mesh** | Passive **Meshtastic** listener: nodes heard, public messages, and a **map** of node positions around your GPS fix |
+| 5 | **GPS** | Fix, satellite radar, waypoints to CSV; sets the clock |
+| 6 | **Infrared** | Sends Flipper Zero `.ir` files (raw, NEC/NECext, Samsung32, SIRC, RC5/RC5X, RC6) |
+| 7 | **RF 433** | Decodes fixed-code remotes from an RX470C, logic scope, saved codes, forward to Home Assistant, replay with a transmitter |
+| 8 | **Portal** | The Cardputer's own hotspot + phone web app: AI chat, config editor, SD file manager (upload/download), mesh node list |
+| 9 | **Files** | On-device SD browser: view, rename, delete, folders, open `.ir` files |
+| 10 | **Config** | Themes (Default, Cyber, Matrix, Amber), clock, battery graph, Wi-Fi, display, sound, system info, back to M5Launcher |
+
+Hardware: Cardputer ADV, with the Cap LoRa-1262 (LoRa + GPS) for LoRa, Mesh and GPS. Everything else works without the Cap.
 
 ## Install
 
-1. Copy everything inside `sd_card/` to the root of the Cardputer's microSD card
-   (you get `/CapDeck.bin` and a `/capdeck/` folder).
-2. In M5Launcher choose **SD** → `CapDeck.bin` → install.
-3. To go back to the launcher later: Config → **Back to M5Launcher**
-   (or use the launcher's usual power-on key).
+**M5Launcher (keeps your launcher):** copy `sd_card/` onto the microSD card's root, then in M5Launcher install
+`CapDeck.bin` from SD.
 
-`firmware/CapDeck-full-flash-0x0.bin` is a full 8 MB image for flashing directly at 0x0
-with esptool / a web flasher. **Don't use it if you want to keep M5Launcher** — it replaces it.
+**Full flash (M5Burner / esptool / web flasher):** flash `firmware/CapDeck-v1.1.0-full-0x0.bin` at address `0x0`.
+This replaces whatever was on the device, M5Launcher included.
 
-## Set up Home Assistant (once)
+The first boot creates `/capdeck/config.json` on the SD card if it isn't there.
 
-Edit `/capdeck/config.json` on a computer:
+## Set it up from your phone (no SD swapping)
+
+1. On the Cardputer, open **Portal** and press **ENTER**.
+2. Scan the QR code with your phone (or join `CapDeck-XXXX` with the password on screen). The control panel opens
+   on its own, or go to `http://192.168.4.1`.
+3. **Config** tab: fill in your Wi-Fi, Home Assistant URL + token, and local AI server, then tap *Save & reload*.
+4. **Files** tab: upload `.ir` remotes, firmware `.bin` files, map tiles, and so on.
+
+When the Cardputer is also on your home Wi-Fi, the panel is at its home IP too (login `capdeck` + the portal password).
+
+## Config reference (`/capdeck/config.json`)
 
 ```json
 "wifi": [ { "ssid": "YourNetwork", "pass": "YourPassword" } ],
-"home_assistant": {
-  "url": "http://192.168.1.50:8123",
-  "token": "long-lived token from your HA profile > Security",
-  "tts_engine": "tts.piper"
-},
-"ha_buttons": [
-  { "name": "Bedroom lights", "service": "light.toggle", "entity": "light.bedroom" },
-  { "name": "Run my automation", "webhook": "capdeck_test" }
-]
+"home_assistant": { "url": "http://192.168.1.50:8123", "token": "...", "tts_engine": "tts.piper" },
+"local_ai": { "url": "http://192.168.1.60:8080", "model": "", "system": "Keep replies short." },
+"ha_buttons": [ { "name": "Bedroom lights", "service": "light.toggle", "entity": "light.bedroom" } ],
+"lora": { "freq_mhz": 915.0, "bw_khz": 125.0, "sf": 9, "cr": 7, "sync_word": 18, "power_dbm": 17 }
 ```
 
-* Use the **local http://IP:8123** address. Talk mode doesn't support https.
-* Buttons can also carry service data: `"data": { "brightness_pct": 40 }`.
-* **Talk** runs your *default* Assist pipeline (or the one named in `"pipeline"`). Whisper does
-  speech-to-text, and whatever conversation agent you picked answers (e.g. Ollama on your PC).
-  Replies are spoken through `tts_engine` (Piper) and shown as text.
-* Config → *Reload config.json* picks up changes without rebooting.
+* **Home Assistant:** use the local `http://IP:8123` address (Talk doesn't support https). Talk uses your default
+  Assist pipeline, e.g. Whisper plus the conversation agent of your choice.
+* **Local AI:** start `llama-server` with `--host 0.0.0.0` (Ollama: `OLLAMA_HOST=0.0.0.0`, port 11434) and allow the
+  port through your firewall.
+
+## Meshtastic notes
+
+CapDeck listens on the US default slot for the chosen modem preset (LongFast = 906.875 MHz). It is **receive-only**
+and never transmits into the mesh. Packets on the public default channel are decoded (names, positions, public
+texts). Private channels and DMs only show the sender. Recent Meshtastic firmware shares location only when the
+owner opts in, so some nodes appear in the list without a map position.
+
+Optional offline map tiles go in `/capdeck/map/<z>/<x>/<y>.png` (or `.jpg`, standard web-mercator tiles). Without
+tiles the map shows a grid with range rings.
 
 ## Keys
 
-`;` `.` up/down · `,` `/` left/right · **ENTER** or **G0** select · **DEL** back ·
-`1`–`9` jump · in chats **Fn+;/Fn+.** scroll · **`** cancels text entry.
+`;` `.` up/down · `,` `/` left/right · **ENTER** or **G0** select · **DEL** back · `1`–`9`, `0` jump ·
+chats: **Fn+;/Fn+.** scroll · **`** cancels text entry.
 
 ## 433 MHz wiring (RX470C → Grove)
 
-GND → black, VCC → red (5 V), DATA → white (G1) **through a divider**
-(DATA —10 kΩ— G1 —20 kΩ— GND). The Grove port is 5 V, and the ESP32-S3 pins only take 3.3 V.
-You can change the pin in RF 433 → Pin setup.
+GND → black, VCC → red (5 V), DATA → white (G1) **through a divider** (DATA —10 kΩ— G1 —20 kΩ— GND). The ESP32-S3
+pins only take 3.3 V.
 
-## Rebuilding from source
+## Building
 
-Arduino IDE / arduino-cli with board **esp32 3.3.x → M5Cardputer** (8 MB, Huge APP partition), plus:
-M5Cardputer, M5Unified, M5GFX, RadioLib **7.8.1**, IRremoteESP8266, rc-switch, TinyGPSPlus,
-ArduinoJson 7, WebSockets (links2004).
+See [CLAUDE.md](CLAUDE.md) for the exact toolchain, library versions and build command.
 
-## Pins used
+## Credits & license
 
-SD + LoRa share SPI (SCK 40, MOSI 14, MISO 39; SD CS 12, LoRa CS 5) · LoRa RST 3, DIO1 4,
-BUSY 6, TCXO 1.8 V · GPS RX 15 / TX 13 @115200 · IR TX 44 · Grove G1/G2.
+CapDeck is written by **doot-noot** with **Claude** (Anthropic) as an AI coding assistant. See
+[CHANGELOG.md](CHANGELOG.md) for how each release was made. CapDeck's own code is MIT-licensed ([LICENSE](LICENSE)).
+It builds on open-source libraries listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Use the radio features only on your own devices and within your local rules (in the US, 902–928 MHz for LoRa).
