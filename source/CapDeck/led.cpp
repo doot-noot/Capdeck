@@ -1,28 +1,23 @@
-// CapDeck - on-board RGB LED. Pure eye-candy, and a handy "you got mail" blink.
-// Deathcaps brand colour is toxic green; that's the stock look.
+// CapDeck - on-board RGB LED. Follows the theme's colour; events get a soft pulse, never a strobe.
+// (A busy mesh used to fire a hard flash per packet. Pulses are smooth and rate-limited now.)
 #include "core.h"
 
-const char *LED_MODE_NAMES[] = {"Off", "Brand green", "Theme colour", "Breathe", "Rainbow", "Alerts only"};
+const char *LED_MODE_NAMES[] = {"Off", "Theme colour", "Breathe", "Brand green", "Rainbow", "Alerts only"};
 
-// brand green (Amanita / Deathcaps)
-static const uint8_t kR = 20, kG = 230, kB = 40;  // brand green
-
-static uint32_t flashUntil = 0;
-static uint8_t fr, fg, fb;
+static const uint32_t BRAND = 0x14E628;  // Deathcaps toxic green
+static uint32_t pulseStart = 0, lastPulse = 0;
+static uint32_t pulseRGB = 0;
 static uint32_t lastWrite = 0;
+static const uint32_t PULSE_MS = 900, PULSE_GAP = 1800;
 
-static void raw(uint8_t r, uint8_t g, uint8_t b) {
-  float s = cfg.ledBright / 255.0f;
-  rgbLedWrite(PIN_LED, (uint8_t)(r * s), (uint8_t)(g * s), (uint8_t)(b * s));
+bool screenIsOff();  // power.cpp
+
+static void raw(uint32_t rgb, float level = 1.0f) {
+  float s = cfg.ledBright / 255.0f * level;
+  rgbLedWrite(PIN_LED, (uint8_t)(((rgb >> 16) & 0xFF) * s), (uint8_t)(((rgb >> 8) & 0xFF) * s), (uint8_t)((rgb & 0xFF) * s));
 }
 
-// pull the theme accent (RGB565) into 8-bit RGB
-static void accentRGB(uint8_t &r, uint8_t &g, uint8_t &b) {
-  uint16_t a = accent();
-  r = ((a >> 11) & 0x1F) << 3;
-  g = ((a >> 5) & 0x3F) << 2;
-  b = (a & 0x1F) << 3;
-}
+static uint32_t themeRGB() { return THEMES[cfg.theme % THEME_COUNT].led; }
 
 static void hsv(uint16_t h, uint8_t &r, uint8_t &g, uint8_t &b) {  // h 0..359, full sat/val
   uint8_t sector = h / 60, f = (h % 60) * 255 / 60;
@@ -37,12 +32,15 @@ static void hsv(uint16_t h, uint8_t &r, uint8_t &g, uint8_t &b) {  // h 0..359, 
   }
 }
 
-void ledFlash(uint8_t r, uint8_t g, uint8_t b, uint32_t ms) {
-  fr = r;
-  fg = g;
-  fb = b;
-  flashUntil = millis() + ms;
+void ledPulse(uint32_t rgb) {
+  if (cfg.ledMode == 0) return;
+  uint32_t now = millis();
+  if (now - lastPulse < PULSE_GAP) return;  // a busy mesh can't turn this into a strobe
+  lastPulse = pulseStart = now;
+  pulseRGB = rgb ? rgb : themeRGB();
 }
+
+void ledFlash(uint8_t r, uint8_t g, uint8_t b, uint32_t) { ledPulse(((uint32_t)r << 16) | ((uint32_t)g << 8) | b); }
 
 void ledApply() {
   lastWrite = 0;  // force a redraw on next tick
@@ -51,35 +49,26 @@ void ledApply() {
 
 void ledTick() {
   uint32_t now = millis();
-  // a flash overrides everything briefly
-  if (now < flashUntil) {
-    if (now - lastWrite < 30) return;
-    lastWrite = now;
-    raw(fr, fg, fb);
-    return;
-  }
   if (now - lastWrite < 40) return;  // ~25 fps is plenty
   lastWrite = now;
-  uint8_t r = 0, g = 0, b = 0;
+  // a pulse: smooth rise and fall, overriding the idle look
+  if (pulseStart && now - pulseStart < PULSE_MS) {
+    float ph = (now - pulseStart) / (float)PULSE_MS;
+    raw(pulseRGB, sinf(ph * PI));
+    return;
+  }
+  if (screenIsOff()) { raw(0); return; }  // screen off: dark, except for pulses
   switch (cfg.ledMode) {
     case 0:
-    case 5:  // alerts only: idle dark (flashes handled above)
-      raw(0, 0, 0);
+    case 5: raw(0); return;  // off / alerts only
+    case 1: raw(themeRGB()); return;
+    case 2: raw(themeRGB(), 0.15f + 0.85f * (sinf(now / 1600.0f * PI) + 1) / 2); return;  // slow breathe
+    case 3: raw(BRAND); return;
+    case 4: {
+      uint8_t r, g, b;
+      hsv((now / 30) % 360, r, g, b);
+      raw(((uint32_t)r << 16) | ((uint32_t)g << 8) | b, 0.8f);
       return;
-    case 1:
-      r = kR; g = kG; b = kB;
-      break;
-    case 2:
-      accentRGB(r, g, b);
-      break;
-    case 3: {  // breathe the brand green
-      float ph = (sinf(now / 1400.0f * PI) + 1) / 2;  // 0..1
-      r = kR * ph; g = kG * ph; b = kB * ph;
-      break;
     }
-    case 4:
-      hsv((now / 18) % 360, r, g, b);
-      break;
   }
-  raw(r, g, b);
 }

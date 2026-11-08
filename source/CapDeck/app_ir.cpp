@@ -306,8 +306,9 @@ static void searchRemotes() {
 static const char *TV_OFF = "/capdeck/ir/Flipper-IRDB/Universal_TV_Remotes/UNIVERSAL_POWER_OFF_DEVICES.ir";
 
 static const char *IR_HELP =
-    "The CapDeck SD kit ships the whole Flipper-IRDB library (about 9,000 remotes, CC0) in "
-    "/capdeck/ir/Flipper-IRDB. SEARCH finds a remote by brand or device. Add your own .ir files "
+    "SEARCH finds any of the ~8,900 Flipper-IRDB remotes (CC0) by brand or device. The Full SD kit has them "
+    "all on the card; otherwise a remote downloads from GitHub the first time you open it (needs Wi-Fi), then "
+    "stays in /capdeck/ir/Flipper-IRDB. Add your own .ir files "
     "anywhere under /capdeck/ir (from the Portal's Files tab too).\n\n"
     "Supported: raw signals plus NEC, NECext, Samsung32, SIRC/15/20, RC5/RC5X, RC6.\n\n"
     "Point the top edge of the Cardputer at the device. The built-in IR LED only "
@@ -328,7 +329,10 @@ void appIR() {
     int r = listMenu("Infrared", col::IR, items, sel, ICON_IR);
     if (r < 0) return;
     int nRec = rec.size();
-    if (r == 0) searchRemotes();
+    if (r == 0) {  // the library index lists every Flipper-IRDB remote; missing ones download on demand
+      if (SD.exists("/capdeck/ir/irdb_index.txt")) irLibrarySearch();
+      else searchRemotes();
+    }
     else if (r == 1) {
       String p = pickFile("Pick a remote", "/capdeck/ir", "ir", col::IR, ICON_IR);
       if (p.length()) irOpenFile(p);

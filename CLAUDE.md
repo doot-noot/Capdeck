@@ -28,7 +28,14 @@ M5Launcher (app `.bin`) and as a full 0x0 image.
 | `icons.cpp` | vector icons on a 64-unit grid (`drawIcon`) |
 | `system.cpp` | NVS settings, `config.json`, Wi-Fi state machine, clock, GPS, LoRa radio + modes, `sysTick()` |
 | `mesh.cpp` | Meshtastic decode/send (header, AES-CTR, minimal protobuf), node DB, band helpers (`meshFreq`, `bandCenter`) |
-| `setup_wizard.cpp` | first-run wizard + card layout |
+| `setup_wizard.cpp` | first-run wizard + card layout, first-boot tips |
+| `backdrops.cpp` | the living wallpapers + theme picker (Still life toggle) |
+| `power.cpp` | Dim → Doze (light sleep) → Spore mode (deep sleep), wake key, wake locks, alarms |
+| `nightcap.cpp` | sky app: stars, planets, Moon, GPS Tracers, ISS propagation + pass alarms |
+| `forage.cpp` | passive Wi-Fi/BLE/mesh logging, WiGLE export |
+| `map.cpp` | the one map: road threads (`.rd` files), nodes, finds, tiles, Web-Mercator helpers |
+| `mycorrhiza.cpp` | HTTP helpers, DDG/Wikipedia, OSM road downloads, Flipper-IRDB on demand, ISS TLE |
+| `rhizomorph.cpp` | RNode (Reticulum) over BLE: KISS protocol, split packets, PIN pairing |
 | `led.cpp` / `macros.cpp` | RGB LED modes / macro engine |
 | `app_*.cpp` | one file per app; `portal.cpp` is hotspot + web app |
 
@@ -44,6 +51,10 @@ M5Launcher (app `.bin`) and as a full 0x0 image.
 - `<FS.h>`/`<SD.h>` must be included before `<M5Cardputer.h>` (enables `drawPngFile(SD, ...)`). `core.h` does this.
 - Meshtastic sending is **Client-Mute only and off by default** (owner's decision). Never add rebroadcasting.
 - Band-dependent frequencies go through `meshFreq()` / `bandCenter()`; never hard-code 915.
+- Power: long-running apps call `stayAwake()` (keeps the screen on) or set a flag checked in `mustStayAwake()`
+  (keeps radios up but lets the screen sleep, like `forageRunning` / `rhizoRunning`).
+- BLE callbacks run on the Bluetooth task: only queue data there; touch app state from the main loop.
+- Rhizomorph must echo every radio setting the host sends (RNS drops the link on a mismatch).
 - `arduino-cli` needs `ctags` for `.ino` preprocessing. Keep functions in the `.ino` defined before use.
 
 ## Release checklist

@@ -17,7 +17,7 @@ void loadSettings() {
   cfg.brightness = prefs.getUChar("bright", 160);
   cfg.accentIdx = prefs.getUChar("accent2", 0);
   cfg.theme = prefs.getUChar("theme", 0);
-  cfg.ledMode = prefs.getUChar("ledmode", 1);
+  cfg.ledMode = prefs.getUChar("ledmode2", 1);
   cfg.ledBright = prefs.getUChar("ledbri", 90);
   cfg.meshListen = prefs.getBool("meshon", false);
   cfg.meshTx = prefs.getBool("meshtx", false);
@@ -30,6 +30,11 @@ void loadSettings() {
   cfg.volume = prefs.getUChar("vol", 110);
   cfg.autoWifi = prefs.getBool("autowifi", true);
   cfg.dimSecs = prefs.getUChar("dim", 30);
+  cfg.stillLife = prefs.getBool("still", false);
+  cfg.tips = prefs.getBool("tips", true);
+  cfg.doze = prefs.getBool("doze", true);
+  cfg.sporeMins = prefs.getUChar("sporemin", 30);
+  cfg.wakeKey = prefs.getUChar("wakekey", 0);
   cfg.rfRxPin = prefs.getChar("rfrx", PIN_GROVE_WHITE);
   cfg.rfTxPin = prefs.getChar("rftx", PIN_GROVE_YELLOW);
   cfg.rfToHA = prefs.getBool("rf2ha", false);
@@ -43,7 +48,7 @@ void saveSettings() {
   prefs.putUChar("bright", cfg.brightness);
   prefs.putUChar("accent2", cfg.accentIdx);
   prefs.putUChar("theme", cfg.theme);
-  prefs.putUChar("ledmode", cfg.ledMode);
+  prefs.putUChar("ledmode2", cfg.ledMode);
   prefs.putUChar("ledbri", cfg.ledBright);
   prefs.putBool("meshon", cfg.meshListen);
   prefs.putBool("meshtx", cfg.meshTx);
@@ -56,6 +61,11 @@ void saveSettings() {
   prefs.putUChar("vol", cfg.volume);
   prefs.putBool("autowifi", cfg.autoWifi);
   prefs.putUChar("dim", cfg.dimSecs);
+  prefs.putBool("still", cfg.stillLife);
+  prefs.putBool("tips", cfg.tips);
+  prefs.putBool("doze", cfg.doze);
+  prefs.putUChar("sporemin", cfg.sporeMins);
+  prefs.putUChar("wakekey", cfg.wakeKey);
   prefs.putChar("rfrx", cfg.rfRxPin);
   prefs.putChar("rftx", cfg.rfTxPin);
   prefs.putBool("rf2ha", cfg.rfToHA);
@@ -335,10 +345,105 @@ TinyGPSPlus &gpsRef() { return gps; }
 bool gpsFix() { return gps.location.isValid() && gps.location.age() < 5000; }
 int gpsSats() { return gps.satellites.isValid() ? gps.satellites.value() : 0; }
 
+// ---- satellites in view: our own small NMEA parser for GSV (position + signal) and GSA (used in fix)
+SatInfo gpsSatTable[48];
+static char nmea[100];
+static uint8_t nmeaLen = 0;
+static uint8_t gsaUsed[32];
+static uint8_t gsaCount = 0;
+static uint32_t gsaAt = 0;
+
+static char sysFromTalker(const char *t, int prn) {
+  if (!strncmp(t, "GP", 2)) return prn > 192 && prn <= 202 ? 'J' : 'G';
+  if (!strncmp(t, "GL", 2)) return 'R';
+  if (!strncmp(t, "GA", 2)) return 'E';
+  if (!strncmp(t, "BD", 2) || !strncmp(t, "GB", 2)) return 'C';
+  if (!strncmp(t, "GQ", 2) || !strncmp(t, "QZ", 2)) return 'J';
+  // GN (mixed): fall back to the classic NMEA PRN ranges
+  if (prn >= 65 && prn <= 96) return 'R';
+  if (prn >= 193 && prn <= 202) return 'J';
+  if (prn >= 201 && prn <= 263) return 'C';
+  if (prn >= 1 && prn <= 32) return 'G';
+  return '?';
+}
+
+static void satStore(char sys, int prn, int elev, int az, int snr) {
+  if (prn <= 0 || prn > 255) return;
+  int slot = -1, oldest = 0;
+  for (int i = 0; i < 48; i++) {
+    if (gpsSatTable[i].prn == prn && gpsSatTable[i].sys == sys) { slot = i; break; }
+    if (gpsSatTable[i].seenMs < gpsSatTable[oldest].seenMs) oldest = i;
+  }
+  if (slot < 0) slot = oldest;
+  SatInfo &s = gpsSatTable[slot];
+  bool used = false;
+  if (millis() - gsaAt < 5000)
+    for (int i = 0; i < gsaCount; i++) used |= gsaUsed[i] == prn;
+  s = {sys, (uint8_t)prn, (int8_t)constrain(elev, -90, 90), (uint16_t)(az % 360), (int8_t)constrain(snr, 0, 99), used, millis()};
+}
+
+static void nmeaLine(char *line) {
+  // split on commas, drop the checksum
+  char *star = strchr(line, '*');
+  if (star) *star = 0;
+  char *f[24];
+  int n = 0;
+  for (char *p = line; n < 24;) {
+    f[n++] = p;
+    char *c = strchr(p, ',');
+    if (!c) break;
+    *c = 0;
+    p = c + 1;
+  }
+  if (n < 1 || strlen(f[0]) < 6) return;
+  const char *talker = f[0] + 1, *type = f[0] + 3;
+  if (!strcmp(type, "GSV")) {
+    for (int i = 4; i + 2 < n; i += 4) {  // groups of PRN, elevation, azimuth, SNR
+      if (!*f[i]) break;
+      int prn = atoi(f[i]);
+      if (!*f[i + 1] || !*f[i + 2]) continue;
+      satStore(sysFromTalker(talker, prn), prn, atoi(f[i + 1]), atoi(f[i + 2]), i + 3 < n ? atoi(f[i + 3]) : 0);
+    }
+  } else if (!strcmp(type, "GSA")) {
+    if (millis() - gsaAt > 800) gsaCount = 0;  // a new GSA burst
+    gsaAt = millis();
+    for (int i = 3; i <= 14 && i < n; i++)
+      if (*f[i] && gsaCount < 32) gsaUsed[gsaCount++] = atoi(f[i]);
+  }
+}
+
+int gpsSatList(std::vector<SatInfo> &out) {
+  out.clear();
+  for (auto &s : gpsSatTable)
+    if (s.prn && millis() - s.seenMs < 15000) out.push_back(s);
+  return out.size();
+}
+
+String satName(const SatInfo &s) {
+  char b[24];
+  switch (s.sys) {
+    case 'G': snprintf(b, sizeof b, "GPS PRN %d", s.prn); break;
+    case 'R': snprintf(b, sizeof b, "GLONASS R%02d", s.prn > 64 ? s.prn - 64 : s.prn); break;
+    case 'E': snprintf(b, sizeof b, "Galileo E%02d", s.prn > 300 ? s.prn - 300 : s.prn); break;
+    case 'C': snprintf(b, sizeof b, "BeiDou C%02d", s.prn > 200 ? s.prn - 200 : s.prn); break;
+    case 'J': snprintf(b, sizeof b, "Michibiki J%02d", s.prn > 192 ? s.prn - 192 : s.prn); break;
+    default: snprintf(b, sizeof b, "Satellite %d", s.prn); break;
+  }
+  return b;
+}
+
 void gpsPoll() {
   while (Serial1.available()) {
-    gps.encode(Serial1.read());
+    char c = Serial1.read();
+    gps.encode(c);
     gpsSeen = true;
+    if (c == '$') nmeaLen = 0;
+    if (c == '\r' || c == '\n') {
+      if (nmeaLen > 6) { nmea[nmeaLen] = 0; nmeaLine(nmea); }
+      nmeaLen = 0;
+    } else if (nmeaLen < sizeof nmea - 1) {
+      nmea[nmeaLen++] = c;
+    }
   }
   // set the system clock from GPS if nothing better is available
   if (!gpsTimeSynced && gps.date.isValid() && gps.time.isValid() && gps.date.year() > 2023 &&
@@ -549,7 +654,7 @@ void loraPoll() {
       loraLog.push_back({s, radio->getRSSI(), radio->getSNR(), false, millis()});
       if (loraLog.size() > 60) loraLog.erase(loraLog.begin());
       loraUnread++;
-      ledFlash(140, 0, 255);  // violet blip for LoRa
+      ledPulse(0);  // soft pulse for LoRa
       beep(3000, 40);
       if (sdOK) {
         File f = SD.open("/capdeck/lora/log.txt", FILE_APPEND);

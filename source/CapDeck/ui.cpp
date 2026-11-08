@@ -3,7 +3,8 @@
 
 FitCanvas canvas(&M5Cardputer.Display);
 
-// Any line that would run off the screen is shortened with ".." instead of being cut mid-letter.
+// The safety net for every line of text on the device: if it would run off the screen edge, shorten it with "..".
+// Only steps in when the anchor point is on screen (text deliberately parked off-screen is left alone).
 size_t FitCanvas::drawString(const char *s, int32_t x, int32_t y) {
   if (!fit || !s || !*s || x < 0 || x > width()) return M5Canvas::drawString(s, x, y);
   const int32_t W = width(), w = textWidth(s);
@@ -34,26 +35,39 @@ size_t FitCanvas::drawString(const char *s, int32_t x, int32_t y) {
   return M5Canvas::drawString(buf, x, y);
 }
 
-
-
 // ------------------------------------------------------------------ themes
-//                name       bg      panel   panel2  text    dim     faint   | ha      ai      lora    mesh    gps     ir      rf      portal  files   conf  | accent  style
+// Every theme is alive (its own wallpaper, see backdrops.cpp) and one colour each. Still life freezes them.
+#define C565(rgb) (uint16_t)((((rgb) >> 8) & 0xF800) | (((rgb) >> 5) & 0x07E0) | (((rgb) >> 3) & 0x001F))
+#define T(name, still, bg, pn, p2, tx, dm, fa, ha, ai, lo, me, gp, ir, rf, po, fi, co, ac, st, led)                      \
+  {name, still, C565(bg), C565(pn), C565(p2), C565(tx), C565(dm), C565(fa), C565(ha), C565(ai), C565(lo), C565(me),       \
+   C565(gp), C565(ir), C565(rf), C565(po), C565(fi), C565(co), C565(ac), st, led}
 const Theme THEMES[] = {
-    // Spore is the default: the house look. (faint lifted from 0x0140 - it was too dark to see on black.)
-    {"Spore", 0x0000, 0x0120, 0x01E0, 0xAFF5, 0x0480, 0x0300, 0x07E8, 0x5FEB, 0x07E0, 0x3FE6, 0x9FF3, 0x07C4, 0x67EC, 0x07E0, 0xB7F6, 0x05E0, 0x07E0, STYLE_SPORE},
-    // Amanita - the Deathcaps house theme: black, toxic green, red spots
-    {"Amanita", 0x0840, 0x0A82, 0x1324, 0xCFF8, 0x6D6C, 0x2282, 0x5FEB, 0x9FF3, 0xB81F, 0x5FE6, 0x07F0, 0xF980, 0xFD20, 0x5FE6, 0xCFE8, 0x8FF3, 0x5FE6, STYLE_PLAIN},
-    // Lava - molten floor, embers drifting up (see STYLE_EMBER in drawBackdrop)
-    {"Lava", 0x1000, 0x3000, 0x4920, 0xFFDF, 0xB3AB, 0x6180, 0xFD20, 0xFFE0, 0xFB2C, 0xFCA0, 0xFFA0, 0xF800, 0xFD60, 0xFEC0, 0xFE60, 0xC5A8, 0xFC00, STYLE_EMBER},
-    {"Classic", 0x0861, 0x10A3, 0x18E5, 0xEF7D, 0x8410, 0x3186, 0x3D7F, 0x5EDF, 0xB01F, 0x67F0, 0x07F0, 0xF8A6, 0xFD20, 0x07FF, 0xFEA0, 0x9CF3, 0x07FF, STYLE_PLAIN},
-    {"Cyber", 0x0002, 0x1006, 0x2009, 0xDFFF, 0x8C7F, 0x3009, 0x07FF, 0xF81F, 0xF81F, 0x07FF, 0xFFE0, 0xF81F, 0xFFE0, 0x07FF, 0xFFE0, 0xB59F, 0xF81F, STYLE_SYNTHWAVE},
-    {"Amber", 0x0800, 0x2100, 0x3180, 0xFED0, 0xB3E0, 0x4200, 0xFDA0, 0xFE40, 0xFC60, 0xFDA0, 0xFE40, 0xFC60, 0xFDA0, 0xFE40, 0xFC60, 0xFDA0, 0xFD20, STYLE_CRT},
-    // Low Power - flat greys, no animated backdrop. Auto-engages when the battery is low (see lowPowerMode).
-    {"Low Power", 0x0000, 0x1082, 0x18C3, 0xC618, 0x8410, 0x4208, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xC618, STYLE_PLAIN},
-    // Matrix - the digital rain, back as its own theme
-    {"Matrix", 0x0000, 0x0120, 0x01E0, 0xAFF5, 0x0480, 0x0300, 0x07E8, 0x5FEB, 0x07E0, 0x3FE6, 0x9FF3, 0x07C4, 0x67EC, 0x07E0, 0xB7F6, 0x05E0, 0x07E0, STYLE_MATRIX},
+    //  living        still       bg        panel     panel2    text      dim       faint     | ha        ai        lora      mesh      gps       ir        rf        portal    files     conf    | accent    style            LED
+    T("Spore", "Lime", 0x000000, 0x0A140C, 0x14261A, 0xD8F5DC, 0x6FA07A, 0x2A4A30, 0x7CFF9E, 0xB6FFCB, 0x39FF6A, 0x5CE68A, 0xA8F0B8, 0x39D46A, 0x8CFFB0, 0x39FF6A, 0xC8F5D0, 0x6FA07A, 0x39FF6A, STYLE_SPORE, 0x14E628),
+    T("Spore Light", "Bone", 0xE6EDE1, 0xD2DECD, 0xBFD0BA, 0x0F2A14, 0x46664C, 0xA2B8A0, 0x1E7A36, 0x2F6B40, 0x1E8A3A, 0x287A44, 0x3D7A2F, 0x2E6B3A, 0x4F7A1E, 0x1E8A3A, 0x5A6B1E, 0x46664C, 0x1E8A3A, STYLE_SPORE, 0x14E628),
+    T("Matrix", "Green", 0x000000, 0x002400, 0x003C00, 0xA8FFA8, 0x009000, 0x006000, 0x00FC40, 0x58FC58, 0x00FC00, 0x38FC30, 0x98FC98, 0x00F820, 0x60FC60, 0x00FC00, 0xB0FCB0, 0x00BC00, 0x00FC00, STYLE_MATRIX, 0x00FF30),
+    T("Ocean", "Blue", 0x020A18, 0x06162E, 0x0C2444, 0xDCEBFF, 0x6F8FB8, 0x1F3657, 0x5FB8FF, 0x8FD0FF, 0x3F7BFF, 0x3FE0D0, 0x7FE8FF, 0x6F9BFF, 0x4FC8FF, 0x3FA9FF, 0xB8DCFF, 0x8FA8C8, 0x3FA9FF, STYLE_OCEAN, 0x1060FF),
+    T("Lava", "Red", 0x140302, 0x2A0806, 0x3E0E0A, 0xFFE8DC, 0xC0806A, 0x4A1A12, 0xFF7A3A, 0xFFB040, 0xFF4A6A, 0xFF8A50, 0xFFC060, 0xFF3020, 0xFF9A30, 0xFFD080, 0xFFC080, 0xC89A88, 0xFF4A1A, STYLE_EMBER, 0xFF2000),
+    T("Amber", "Orange", 0x0A0500, 0x201000, 0x301800, 0xFFD9A0, 0xB07A30, 0x402810, 0xFFB040, 0xFFC860, 0xFF9020, 0xFFB040, 0xFFD080, 0xFF8020, 0xFFA840, 0xFFC860, 0xFFD080, 0xC89050, 0xFFA020, STYLE_CRT, 0xFF7000),
+    T("Storm", "Yellow", 0x0A0B10, 0x181A24, 0x242838, 0xF2F2E8, 0x9A9AA8, 0x30344A, 0xFFE040, 0xFFF080, 0xD8E0FF, 0xFFD000, 0xFFF6A0, 0xFFC020, 0xFFE870, 0xB0C8FF, 0xFFF0B0, 0xA8ACC0, 0xFFE040, STYLE_STORM, 0xFFC800),
+    T("Cyber", "Magenta", 0x000010, 0x100030, 0x200048, 0xD8FCF8, 0x8888F8, 0x300048, 0x00FCF8, 0xF800F8, 0xF800F8, 0x00FCF8, 0xF8FC00, 0xF800F8, 0xF8FC00, 0x00FCF8, 0xF8FC00, 0xB0B0F8, 0xF800F8, STYLE_SYNTHWAVE, 0xB000FF),
+    T("Aurora", "Purple", 0x06040F, 0x140C26, 0x22163A, 0xEDE4FF, 0x9A88C0, 0x2E2248, 0x8A6AFF, 0xC49AFF, 0xB06AFF, 0x4AF0B0, 0x7AE0FF, 0xE06AFF, 0xFF8AE0, 0x6AD8FF, 0xD8C8FF, 0xA898C8, 0xB06AFF, STYLE_AURORA, 0x9030FF),
+    T("Abyss", "Cyan", 0x000A0C, 0x00181C, 0x00262C, 0xD8FFFC, 0x5FA8A8, 0x103638, 0x20D8F0, 0x80FFF0, 0x20F0E0, 0x40FFC0, 0xA0FFF8, 0x20B0FF, 0x60E0D0, 0x20F0E0, 0xB0FFF8, 0x70A8A8, 0x20F0E0, STYLE_ABYSS, 0x00E0D0),
+    T("Void", "White", 0x000000, 0x141414, 0x222222, 0xF4F4F4, 0x9A9A9A, 0x333333, 0xFFFFFF, 0xDADADA, 0xC8C8C8, 0xEDEDED, 0xBEBEBE, 0xF0F0F0, 0xD4D4D4, 0xFFFFFF, 0xE0E0E0, 0xA8A8A8, 0xFFFFFF, STYLE_VOID, 0xC0C0C0),
 };
+#undef T
 const int THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
+
+uint16_t blend565(uint16_t a, uint16_t b, float t) {  // t=1 -> a
+  int ar = (a >> 11) & 31, ag = (a >> 5) & 63, ab = a & 31;
+  int br = (b >> 11) & 31, bg = (b >> 5) & 63, bb = b & 31;
+  return ((int)(br + (ar - br) * t) << 11) | ((int)(bg + (ag - bg) * t) << 5) | (int)(bb + (ab - bb) * t);
+}
+
+static int lum565(uint16_t c) {
+  int r = ((c >> 11) & 0x1F) * 255 / 31, g = ((c >> 5) & 0x3F) * 255 / 63, b = (c & 0x1F) * 255 / 31;
+  return (r * 299 + g * 587 + b * 114) / 1000;
+}
 
 void applyTheme(uint8_t idx) {
   const Theme &t = THEMES[idx % THEME_COUNT];
@@ -61,13 +75,24 @@ void applyTheme(uint8_t idx) {
   col::TEXT = t.text; col::DIM = t.dim; col::FAINT = t.faint;
   col::HA = t.ha; col::AI = t.ai; col::LORA = t.lora; col::MESH = t.mesh; col::GPS = t.gps;
   col::IR = t.ir; col::RF = t.rf; col::PORTAL = t.portal; col::FILES = t.files; col::CONF = t.conf;
-  if (t.style == STYLE_MATRIX || t.style == STYLE_SPORE || t.style == STYLE_CRT) {  // monochrome themes keep status colours on-palette
+  bool light = lum565(t.bg) > 128;
+  col::BAR = light ? t.panel2 : 0x0020;
+  if (t.style == STYLE_MATRIX || t.style == STYLE_CRT) {  // monochrome themes keep status colours on-palette
     col::OK = t.ha; col::WARN = t.rf; col::BAD = t.style == STYLE_CRT ? 0xF9A0 : 0xF8C3;
+  } else if (light) {  // darker status colours that read on a pale background
+    col::OK = 0x1C64; col::WARN = 0xA3E0; col::BAD = 0xB0A2;
   } else {
     col::OK = 0x2FE6; col::WARN = 0xFE60; col::BAD = 0xF8C3;
   }
 }
-ThemeStyle themeStyle() { return THEMES[cfg.theme % THEME_COUNT].style; }
+ThemeStyle themeStyle() {
+  if (cfg.stillLife || lowPowerMode()) return STYLE_PLAIN;
+  return THEMES[cfg.theme % THEME_COUNT].style;
+}
+const char *themeName(int idx) {
+  const Theme &t = THEMES[idx % THEME_COUNT];
+  return cfg.stillLife ? t.still : t.name;
+}
 
 static const uint16_t ACCENTS[] = {0x07FF, 0xF81F, 0x07E0, 0xFD20, 0x3D7F, 0xF8A6};
 uint16_t accent() {
@@ -79,16 +104,6 @@ uint16_t accent() {
 static Key lastKey;
 static bool keyHeld = false;
 static uint32_t heldSince = 0, lastRepeat = 0;
-static uint32_t lastActivity = 0;
-static bool dimmed = false;
-
-void wakeScreen() {
-  lastActivity = millis();
-  if (dimmed) {
-    dimmed = false;
-    applyBrightness();
-  }
-}
 
 static Key decode(Keyboard_Class::KeysState &st) {
   Key k;
@@ -146,12 +161,9 @@ Key readKey() {
     k.enter = k.any = true;
   }
   if (k.any) {
-    bool wasDim = dimmed;
-    wakeScreen();
-    if (wasDim) return Key();  // first press only wakes the screen
-  } else if (cfg.dimSecs && !dimmed && now - lastActivity > cfg.dimSecs * 1000UL) {
-    dimmed = true;
-    M5Cardputer.Display.setBrightness(max(8, cfg.brightness / 8));
+    if (powerOnKey()) return Key();  // first press only wakes the screen
+  } else {
+    powerIdle();  // dim -> screen off -> doze -> Spore mode (power.cpp)
   }
   return k;
 }
@@ -186,17 +198,23 @@ String fitText(const String &s, int maxW) {
 }
 
 // Black or white, whichever is readable on `bg`. Keeps bubbles/rows legible in every theme.
-uint16_t textOn(uint16_t bg) {
-  int r = ((bg >> 11) & 0x1F) * 255 / 31, g = ((bg >> 5) & 0x3F) * 255 / 63, b = (bg & 0x1F) * 255 / 31;
-  return (r * 299 + g * 587 + b * 114) / 1000 > 140 ? 0x0000 : 0xFFFF;
-}
+uint16_t textOn(uint16_t bg) { return lum565(bg) > 140 ? 0x0000 : 0xFFFF; }
 
 bool batteryCharging() {
   // (int) cast keeps this working whether the core returns bool or an is_charging_t enum.
   return (int)M5Cardputer.Power.isCharging() == 1;
 }
 
-bool lowPowerMode() { return M5Cardputer.Power.getBatteryLevel() <= 15 && !batteryCharging(); }
+// Cached: reading the battery fuel gauge every frame is wasted I2C traffic.
+bool lowPowerMode() {
+  static uint32_t at = 0;
+  static bool low = false;
+  if (!at || millis() - at > 5000) {
+    at = millis();
+    low = M5Cardputer.Power.getBatteryLevel() <= 15 && !batteryCharging();
+  }
+  return low;
+}
 
 // ------------------------------------------------------------------ status bar
 void drawBattery(LovyanGFX &g, int x, int y, int level, uint16_t c) {
@@ -219,15 +237,15 @@ void drawWifiGlyph(LovyanGFX &g, int x, int y, int bars, uint16_t c) {
 }
 
 void drawStatusBar(const char *title, uint16_t color) {
-  canvas.fillRect(0, 0, SCR_W, BAR_H, 0x0020);
+  canvas.fillRect(0, 0, SCR_W, BAR_H, col::BAR);
   canvas.drawFastHLine(0, BAR_H - 1, SCR_W, col::FAINT);
   canvas.setFont(&fonts::Font0);
   canvas.setTextSize(1);
   canvas.setTextDatum(middle_left);
   canvas.setTextColor(col::TEXT);
-  String clk = timeValid() ? timeStr() : "--:--";
+  String clk = timeValid() ? timeStr() : String("--:--");
   canvas.drawString(clk, 4, 7);
-  if (devMode()) {  // live free-heap meter for the curious (placed after the clock so they never overlap)
+  if (devMode()) {  // live free-heap meter for the curious (placed after the clock, never on top of it)
     uint32_t kb = ESP.getFreeHeap() / 1024;
     canvas.setTextColor(kb < 40 ? col::BAD : kb < 80 ? col::WARN : col::OK);
     canvas.drawString(String(kb) + "k", 4 + canvas.textWidth(clk) + 5, 7);
@@ -263,7 +281,7 @@ void drawStatusBar(const char *title, uint16_t color) {
     x -= 8;
     canvas.fillCircle(x + 3, 6, 3, col::GPS);
     canvas.fillTriangle(x, 7, x + 6, 7, x + 3, 12, col::GPS);
-    canvas.fillCircle(x + 3, 6, 1, 0x0020);
+    canvas.fillCircle(x + 3, 6, 1, col::BAR);
     x -= 4;
   }
   if (portalActive()) {
@@ -302,7 +320,7 @@ void drawHeader(const char *title, uint16_t color, uint8_t icon) {
   canvas.setFont(&fonts::FreeSansBold9pt7b);
   canvas.setTextDatum(middle_left);
   canvas.setTextColor(col::TEXT);
-  canvas.drawString(title, tx, BAR_H + 9);
+  canvas.drawString(fitText(title, SCR_W - tx - 48), tx, BAR_H + 9);  // leave room for "3/12" or a status
 }
 
 // ------------------------------------------------------------------ text wrap / popups

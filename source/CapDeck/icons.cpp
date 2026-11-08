@@ -251,13 +251,71 @@ void iconMap(const Pen &p) {
   p.disc(1, -6, 2.5f, p.bg);
 }
 
-// Duck: zero-setup web lookups
-void iconDuck(const Pen &p) {
-  p.disc(4, 12, 20);                // body
-  p.disc(-8, -12, 13);              // head
-  p.tri(2, -17, 30, -11, 2, -5);    // bill
-  p.disc(10, 14, 9, p.bg);          // wing
-  p.disc(-11, -15, 3.0f, p.bg);     // eye
+// Mycorrhiza: a cap above ground, the hyphae trading with the world below (downloads & lookups)
+void iconMyco(const Pen &p) {
+  p.ring(0, -5, 21, 21, 180, 360);  // cap
+  p.rrect(-23, -7, 23, -3, 2);      // rim
+  p.disc(-9, -13, 2.6f, p.bg);
+  p.disc(5, -18, 2.2f, p.bg);
+  p.disc(13, -10, 2.0f, p.bg);
+  p.rrect(-4, -3, 4, 10, 2);        // stem
+  p.line(-29, 10, 29, 10, 1.3f);    // the ground
+  p.line(0, 10, -17, 24, 1.7f);
+  p.line(-17, 24, -27, 21, 1.2f);
+  p.line(-11, 19, -10, 29, 1.2f);
+  p.line(0, 10, 16, 25, 1.7f);
+  p.line(16, 25, 27, 23, 1.2f);
+  p.line(9, 18, 6, 29, 1.2f);
+  p.disc(-27, 21, 2.2f);
+  p.disc(27, 23, 2.2f);
+  p.disc(-10, 29, 1.7f);
+  p.disc(6, 29, 1.7f);
+}
+
+// Forage: a basket with a mushroom peeking out
+void iconForage(const Pen &p) {
+  p.ring(0, 4, 23, 3.4f, 180, 360);  // handle
+  p.ring(-8, 2, 12, 12, 180, 360);   // the find
+  p.rrect(-11, 1, -5, 7, 1);
+  p.disc(-12, -4, 1.9f, p.bg);
+  p.disc(-4, -6, 1.6f, p.bg);
+  p.tri(-27, 4, 27, 4, 19, 29);      // basket
+  p.tri(-27, 4, 19, 29, -19, 29);
+  p.line(-23, 12, 23, 12, 1.3f, p.bg);
+  p.line(-21, 20, 21, 20, 1.3f, p.bg);
+  p.line(-6, 5, -4, 28, 1.1f, p.bg);
+  p.line(7, 5, 6, 28, 1.1f, p.bg);
+}
+
+// Rhizomorph: root-like cords carrying a pulse between two nodes
+void iconRhizo(const Pen &p) {
+  p.disc(-22, -16, 6);                 // node A
+  p.disc(22, 18, 6);                   // node B
+  p.line(-18, -12, -6, -2, 2.6f);      // the main cord, braided
+  p.line(-6, -2, 6, 2, 2.6f);
+  p.line(6, 2, 18, 14, 2.6f);
+  p.line(-16, -18, 0, -10, 1.4f);      // side strands
+  p.line(0, -10, 16, 10, 1.4f);
+  p.line(-20, -8, -4, 6, 1.4f);
+  p.line(-4, 6, 14, 20, 1.4f);
+  p.line(-4, 6, -14, 22, 1.2f);        // a root reaching off
+  p.line(6, 2, 24, -8, 1.2f);
+  p.disc(0, 0, 3.4f, p.bg);            // the pulse travelling along
+  p.disc(0, 0, 2.2f);
+}
+
+// Nightcap: a crescent moon in a sleeping cap, one eye open on the sky
+void iconNightcap(const Pen &p) {
+  p.disc(-2, 4, 24);
+  p.disc(9, -3, 20, p.bg);           // carve the crescent
+  p.tri(-21, -10, -2, -21, 18, -30); // the cap
+  p.disc(19, -30, 4);                // pompom
+  p.disc(-14, 6, 5.2f, p.bg);        // the open eye
+  p.disc(-13, 6, 2.6f);
+  p.line(-20, 0, -8, 1, 1.0f);       // lid
+  p.line(22, 6, 22, 16, 1.2f);       // a star
+  p.line(17, 11, 27, 11, 1.2f);
+  p.disc(12, 24, 1.6f);              // and a smaller one
 }
 }  // namespace
 
@@ -284,6 +342,9 @@ void drawIcon(LovyanGFX &g, uint8_t icon, int cx, int cy, int size, uint16_t col
     case ICON_SCAN: iconScan(p); break;
     case ICON_MAP: iconMap(p); break;
     case ICON_MACRO: iconMacro(p); break;
-    case ICON_DUCK: iconDuck(p); break;
+    case ICON_MYCO: iconMyco(p); break;
+    case ICON_FORAGE: iconForage(p); break;
+    case ICON_RHIZO: iconRhizo(p); break;
+    case ICON_NIGHTCAP: iconNightcap(p); break;
   }
 }

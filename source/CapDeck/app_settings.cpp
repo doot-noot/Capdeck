@@ -244,27 +244,47 @@ static void sliderScreen(const char *title, uint8_t icon, uint8_t &value, uint8_
 
 static void displayMenu() {
   int sel = 0;
-  const uint8_t dims[] = {15, 30, 60, 120, 0};
   while (true) {
-    std::vector<ListItem> items = {{"Theme", THEMES[cfg.theme % THEME_COUNT].name, ICON_DISPLAY, accent()},
+    std::vector<ListItem> items = {{"Theme", themeName(cfg.theme), ICON_DISPLAY, accent()},
                                    {"Brightness", String(cfg.brightness * 100 / 255) + "%", ICON_DISPLAY, 0},
                                    {"Accent colour", cfg.accentIdx ? "custom" : "theme", ICON_DISPLAY, accent()},
                                    {"LED", LED_MODE_NAMES[cfg.ledMode % LED_MODE_COUNT], ICON_DISPLAY, 0},
-                                   {"LED brightness", String(cfg.ledBright * 100 / 255) + "%", ICON_DISPLAY, 0},
-                                   {"Dim after", cfg.dimSecs ? String(cfg.dimSecs) + " s" : "never", ICON_CLOCK, 0}};
+                                   {"LED brightness", String(cfg.ledBright * 100 / 255) + "%", ICON_DISPLAY, 0}};
     int r = listMenu("Display", col::CONF, items, sel, ICON_DISPLAY);
     if (r < 0) return;
-    if (r == 0) { cfg.theme = (cfg.theme + 1) % THEME_COUNT; applyTheme(cfg.theme); saveSettings(); }
+    if (r == 0) themePicker();
     if (r == 1) sliderScreen("Brightness", ICON_DISPLAY, cfg.brightness, 15, [] { applyBrightness(); });
     if (r == 2) { cfg.accentIdx = (cfg.accentIdx + 1) % 7; saveSettings(); }
-    if (r == 3) { cfg.ledMode = (cfg.ledMode + 1) % LED_MODE_COUNT; ledApply(); saveSettings(); if (cfg.ledMode == 5) ledFlash(20, 230, 40, 500); }
+    if (r == 3) { cfg.ledMode = (cfg.ledMode + 1) % LED_MODE_COUNT; ledApply(); saveSettings(); ledPulse(0); }
     if (r == 4) sliderScreen("LED brightness", ICON_DISPLAY, cfg.ledBright, 0, [] { ledApply(); });
-    if (r == 5) {
+  }
+}
+
+// Power: one knob for everyone (screen timeout). The fine-tuning lives in DO_NOT_TOUCH.json.
+static void powerMenu() {
+  int sel = 0;
+  const uint8_t dims[] = {15, 30, 60, 120, 0};
+  while (true) {
+    String to = cfg.dimSecs ? (cfg.dimSecs < 60 ? String(cfg.dimSecs) + " s" : String(cfg.dimSecs / 60) + " min") : String("always on");
+    std::vector<ListItem> items = {{"Screen timeout", to, ICON_CLOCK, 0},
+                                   {"Wake key", WAKE_KEY_NAMES[cfg.wakeKey % 3], ICON_POWER, 0},
+                                   {"Tips while learning", cfg.tips ? "on" : "off", ICON_INFO, 0},
+                                   {"Spore mode now", "deep sleep", ICON_POWER, col::WARN}};
+    int r = listMenu("Power", col::CONF, items, sel, ICON_POWER);
+    if (r < 0) return;
+    if (r == 0) {
       int i = 0;
       while (i < 5 && dims[i] != cfg.dimSecs) i++;
       cfg.dimSecs = dims[(i + 1) % 5];
       saveSettings();
     }
+    if (r == 1) {
+      cfg.wakeKey = (cfg.wakeKey + 1) % 3;
+      saveSettings();
+      if (cfg.wakeKey == 2) toast("Pocket mode: hold Fn, then press Enter to wake", col::CONF, 1800);
+    }
+    if (r == 2) { cfg.tips = !cfg.tips; saveSettings(); }
+    if (r == 3 && confirmBox(String("Deep sleep now? ") + WAKE_KEY_NAMES[cfg.wakeKey % 3] + " wakes it.", col::CONF)) sporeMode("You asked");
   }
 }
 
@@ -383,12 +403,7 @@ static void backToLauncher() {
 }
 
 static void sleepNow() {
-  if (!confirmBox("Deep sleep? Press G0 to wake.", col::CONF)) return;
-  M5Cardputer.Display.setBrightness(0);
-  M5Cardputer.Display.sleep();
-  wifiStop();
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
-  esp_deep_sleep_start();
+  if (confirmBox(String("Spore mode (deep sleep)? ") + WAKE_KEY_NAMES[cfg.wakeKey % 3] + " wakes it.", col::CONF)) sporeMode("You asked");
 }
 
 // ------------------------------------------------------------------ developer tools
@@ -462,7 +477,10 @@ static void devScreen() {
                                    {"Live memory", humanSize(ESP.getFreeHeap()) + " free", ICON_INFO, 0},
                                    {"View config.json", "", ICON_FILES, col::FILES},
                                    {"View macros.json", "", ICON_FILES, col::FILES},
-                                   {"Save diagnostics to SD", "capdeck_diag.txt", ICON_FILES, col::FILES}};
+                                   {"Save diagnostics to SD", "capdeck_diag.txt", ICON_FILES, col::FILES},
+                                   {"Doze (light sleep)", cfg.doze ? "on" : "off", ICON_POWER, 0},
+                                   {"Spore mode after", cfg.sporeMins ? String(cfg.sporeMins) + " min dozing" : String("never"), ICON_POWER, 0},
+                                   {"Reset tips", "show them again", ICON_INFO, 0}};
     int r = listMenu("DO_NOT_TOUCH.json", col::CONF, items, sel, ICON_CONF);
     if (r < 0) return;
     switch (r) {
@@ -492,13 +510,23 @@ static void devScreen() {
         toast("Saved to /capdeck/capdeck_diag.txt - grab it in Portal > Files", col::OK, 2200);
         break;
       }
+      case 5: cfg.doze = !cfg.doze; saveSettings(); break;
+      case 6: {
+        const uint8_t opts[] = {10, 30, 60, 0};
+        int i = 0;
+        while (i < 4 && opts[i] != cfg.sporeMins) i++;
+        cfg.sporeMins = opts[(i + 1) % 4];
+        saveSettings();
+        break;
+      }
+      case 7: { void tipsReset(); tipsReset(); toast("Tips will show again", col::OK, 900); break; }
     }
   }
 }
 
 void appSettings() {
   // Action IDs instead of raw row indices, so hiding a row (e.g. Developer) never shifts the wrong case.
-  enum Act { A_THEME, A_CLOCK, A_BATT, A_WIFI, A_DISP, A_SOUND, A_RELOAD, A_SYS, A_DEV, A_SETUP, A_LAUNCH, A_SLEEP, A_REBOOT };
+  enum Act { A_THEME, A_CLOCK, A_BATT, A_WIFI, A_DISP, A_POWER, A_SOUND, A_RELOAD, A_SYS, A_DEV, A_SETUP, A_LAUNCH, A_SLEEP, A_REBOOT };
   int sel = 0;
   while (true) {
     String clk = timeValid() ? timeStr() : "not set";
@@ -507,27 +535,29 @@ void appSettings() {
     std::vector<ListItem> items;
     std::vector<Act> acts;
     auto add = [&](ListItem it, Act a) { items.push_back(it); acts.push_back(a); };
-    add({"Theme", THEMES[cfg.theme % THEME_COUNT].name, ICON_DISPLAY, accent()}, A_THEME);
+    add({"Theme", themeName(cfg.theme), ICON_DISPLAY, accent()}, A_THEME);
     add({"Clock", clk, ICON_CLOCK, 0}, A_CLOCK);
     add({"Battery", bat, ICON_BATTERY, 0}, A_BATT);
     add({"Wi-Fi", wf, ICON_WIFI, 0}, A_WIFI);
     add({"Display", "", ICON_DISPLAY, 0}, A_DISP);
+    add({"Power", cfg.dimSecs ? "auto sleep" : "always on", ICON_POWER, 0}, A_POWER);
     add({"Sound", cfg.sound ? "on" : "off", ICON_SOUND, 0}, A_SOUND);
     add({"Reload config.json", "", ICON_FILES, col::FILES}, A_RELOAD);
     add({"System info", "", ICON_INFO, 0}, A_SYS);
     if (devMode()) add({"DO_NOT_TOUCH.json", "cheats", ICON_CONF, col::OK}, A_DEV);  // hidden until unlocked in System info
     add({"Run setup again", "", ICON_CONF, 0}, A_SETUP);
     add({"Back to M5Launcher", "", ICON_POWER, col::WARN}, A_LAUNCH);
-    add({"Sleep", "", ICON_POWER, 0}, A_SLEEP);
+    add({"Spore mode", "deep sleep", ICON_POWER, 0}, A_SLEEP);
     add({"Reboot", "", ICON_POWER, col::BAD}, A_REBOOT);
     int r = listMenu("Config", col::CONF, items, sel, ICON_CONF);
     if (r < 0) return;
     switch (acts[r]) {
-      case A_THEME: cfg.theme = (cfg.theme + 1) % THEME_COUNT; applyTheme(cfg.theme); saveSettings(); break;
+      case A_THEME: themePicker(); break;
       case A_CLOCK: clockScreen(); break;
       case A_BATT: batteryScreen(); break;
       case A_WIFI: wifiMenu(); break;
       case A_DISP: displayMenu(); break;
+      case A_POWER: powerMenu(); break;
       case A_SOUND: soundMenu(); break;
       case A_RELOAD:
         if (loadConfigFile()) { meshBuildChannels(); loraApplyParams(); toast("Config reloaded", col::OK, 900); }

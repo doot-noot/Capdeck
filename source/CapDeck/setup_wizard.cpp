@@ -1,25 +1,27 @@
-// CapDeck - first-run setup: theme, Wi-Fi, Meshtastic listening. Everything else is in Portal.
+// CapDeck - first-run setup: theme, tips, Wi-Fi, Meshtastic listening. Everything else is in Portal.
 #include "core.h"
 
 void wifiScanConnect();  // app_settings.cpp
 
-static void card(const char *title, const char *line1, const char *line2, uint8_t icon, uint16_t c, int step, int steps) {
+// A setup card. The body text wraps to the space beside the icon (it used to run off the screen).
+static void card(const char *title, const char *body, uint8_t icon, uint16_t c, int step, int steps) {
+  const int tx = 92, tw = SCR_W - tx - 6;
   canvas.fillScreen(col::BG);
   drawStatusBar("SETUP", accent());
-  drawIcon(canvas, icon, 46, 74, 60, c);
+  drawIcon(canvas, icon, 46, 72, 58, c);
   canvas.setFont(&fonts::FreeSansBold12pt7b);
   canvas.setTextDatum(top_left);
   canvas.setTextColor(col::TEXT);
-  canvas.drawString(title, 92, 34);
+  canvas.drawString(title, tx, 26);
   canvas.setFont(&fonts::Font2);
   canvas.setTextColor(col::DIM);
-  std::vector<String> lines;  // wrap instead of running off the right edge
-  wrapText(String(line1) + " " + line2, SCR_W - 92 - 4, lines);
-  for (size_t i = 0; i < lines.size() && i < 3; i++) canvas.drawString(lines[i], 92, 60 + i * 15);
+  std::vector<String> lines;
+  wrapText(body, tw, lines);
+  for (size_t i = 0; i < lines.size() && i < 4; i++) canvas.drawString(lines[i], tx, 54 + i * 15);
   canvas.setFont(&fonts::Font0);
   canvas.setTextColor(c);
-  canvas.drawString("ENTER yes   DEL skip", 92, 110);
-  for (int i = 0; i < steps; i++) canvas.fillRoundRect(92 + i * 14, 124, 10, 4, 2, i <= step ? c : col::FAINT);
+  canvas.drawString("ENTER yes    DEL no", tx, 116);
+  for (int i = 0; i < steps; i++) canvas.fillRoundRect(tx + i * 14, 128, 10, 4, 2, i <= step ? c : col::FAINT);
   pushFrame();
 }
 
@@ -33,37 +35,32 @@ static bool ask() {
 }
 
 void firstRunWizard() {
-  const int steps = 4;
-  card("Hi!", "CapDeck quick setup.", "Takes about a minute.", ICON_CONF, accent(), 0, steps);
+  const int steps = 6;
+  card("Hi!", "CapDeck quick setup. Takes about a minute.", ICON_CONF, accent(), 0, steps);
   if (!ask()) goto done;
 
-  {  // theme
-    std::vector<ListItem> items;
-    for (int i = 0; i < THEME_COUNT; i++) items.push_back({THEMES[i].name, "", ICON_DISPLAY, THEMES[i].accent});
-    int sel = cfg.theme;
-    int r = listMenu("Pick a theme", accent(), items, sel, ICON_DISPLAY);
-    if (r >= 0) {
-      cfg.theme = r;
-      applyTheme(r);
-      saveSettings();
-    }
-  }
+  card("Theme", "Every theme is alive. Pick one you like (you can change it any time in Config).", ICON_DISPLAY, accent(), 1, steps);
+  if (ask()) themePicker();
 
-  card("Wi-Fi", "Join your home Wi-Fi?", "Needed for HA & Local AI.", ICON_WIFI, accent(), 1, steps);
+  card("Tips", "Show longer hints while you learn? They shrink on their own once you know an app.", ICON_INFO, accent(), 2, steps);
+  cfg.tips = ask();
+  saveSettings();
+
+  card("Wi-Fi", "Join your home Wi-Fi? Needed for Home Assistant, Local AI and lookups.", ICON_WIFI, accent(), 3, steps);
   if (ask()) wifiScanConnect();
 
   if (loraPresent) {
-    card("Mycelium", "Listen for Meshtastic", "nodes nearby? (LongFast)", ICON_MESH, col::MESH, 2, steps);
+    card("Mycelium", "Listen for Meshtastic nodes nearby? (LongFast, the usual public channel)", ICON_MESH, col::MESH, 4, steps);
     if (ask()) {
       cfg.meshListen = true;
-      cfg.meshPreset = 0;  // LongFast - what Michigan Mesh uses
+      cfg.meshPreset = 0;  // LongFast - what most public meshes use
       saveSettings();
       meshBuildChannels();
       loraSetMode(RM_MESH);
     }
   }
 
-  card("Done!", "Open PORTAL any time to", "set up HA + AI from your phone", ICON_PORTAL, col::PORTAL, 3, steps);
+  card("Done!", "Open Portal any time to set up Home Assistant and AI from your phone.", ICON_PORTAL, col::PORTAL, 5, steps);
   ask();
 
 done:
@@ -79,4 +76,32 @@ bool needsFirstRun() {
   bool done = p.getBool("setup12", false);
   p.end();
   return !done;
+}
+
+// ------------------------------------------------------------------ tips
+// Longer hints for an app's first 3 opens; after that, the short ones. Opens are counted per app in NVS.
+static uint8_t curOpens = 255;
+
+void tipsOpened(const char *app) {
+  uint32_t h = 2166136261u;
+  for (const char *c = app; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+  char key[12];
+  snprintf(key, sizeof key, "o%08lx", (unsigned long)h);
+  Preferences p;
+  p.begin("tips", false);
+  curOpens = p.getUChar(key, 0);
+  if (curOpens < 250) p.putUChar(key, curOpens + 1);
+  p.end();
+}
+
+bool tipsActive() { return cfg.tips && curOpens < 3; }
+
+const char *tip(const char *longText, const char *shortText) { return tipsActive() ? longText : shortText; }
+
+void tipsReset() {
+  Preferences p;
+  p.begin("tips", false);
+  p.clear();
+  p.end();
+  curOpens = 0;
 }

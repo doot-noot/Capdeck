@@ -297,10 +297,8 @@ static void routes() {
 
 void portalStart() {
   if (active) return;
-  if (cfg.portalPass.length() < 8) {
-    const char *cs = "abcdefghjkmnpqrstuvwxyz23456789";
-    cfg.portalPass = "";
-    for (int i = 0; i < 8; i++) cfg.portalPass += cs[esp_random() % 31];
+  if (cfg.portalPass.length() < 8) {  // Wi-Fi needs 8+ characters; easy to remember, on brand
+    cfg.portalPass = "deathcaps";
     saveSettings();
   }
   bool sta = netState() == NetState::UP || netState() == NetState::CONNECTING;
@@ -354,10 +352,18 @@ void appPortal() {
       lastDraw = 0;
     }
     if (k.ch == 'u' || k.tab) { showUrl = !showUrl; lastDraw = 0; }
-    if (k.ch == 'p' && active && confirmBox("Make a new hotspot password? (phones will need to re-join)", col::PORTAL)) {
-      cfg.portalPass = "";
-      portalStop();
-      portalStart();
+    if (k.ch == 'p') {  // set your own hotspot password
+      String np = cfg.portalPass;
+      if (textInput("Hotspot password (8+)", np, col::PORTAL, false, 32)) {
+        if (np.length() < 8) toast("Needs at least 8 characters (Wi-Fi rule)", col::WARN, 1600);
+        else {
+          cfg.portalPass = np;
+          saveSettings();
+          if (active) { portalStop(); portalStart(); }
+          toast("Password saved. Phones need to re-join.", col::OK, 1400);
+        }
+      }
+      lastDraw = 0;
     }
     if (millis() - lastDraw < 1000) { delay(10); continue; }
     lastDraw = millis();
@@ -370,8 +376,8 @@ void appPortal() {
       canvas.drawString("Phone control panel", 92, 40);
       canvas.setFont(&fonts::Font0);
       canvas.setTextColor(col::DIM);
-      const char *lines[] = {"- chat with your local AI", "- edit config.json", "- upload / download SD files",
-                             "- see Meshtastic nodes", "ENTER to start the hotspot"};
+      const char *lines[] = {"- chat with your local AI", "- edit config.json", "- move files to/from SD",
+                             "- see Meshtastic nodes", "ENTER starts the hotspot"};
       for (int i = 0; i < 5; i++) {
         if (i == 4) canvas.setTextColor(col::PORTAL);
         canvas.drawString(lines[i], 92, 62 + i * 13);
@@ -402,8 +408,8 @@ void appPortal() {
     String lan = netState() == NetState::UP ? "home: " + WiFi.localIP().toString() : String("not on home Wi-Fi");
     canvas.drawString(lan, x, y);
     canvas.setTextDatum(bottom_right);
-    canvas.setTextColor(col::FAINT);
-    canvas.drawString(showUrl ? "U: wifi QR" : "U: link QR", SCR_W - 4, SCR_H - 1);
+    canvas.setTextColor(col::DIM);
+    canvas.drawString(showUrl ? "U wifi QR  P password" : "U link QR  P password", SCR_W - 4, SCR_H - 1);
     canvas.setTextDatum(middle_right);
     canvas.setTextColor(col::OK);
     canvas.drawString(String(WiFi.softAPgetStationNum()) + " connected", SCR_W - 6, BAR_H + 9);

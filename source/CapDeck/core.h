@@ -12,7 +12,7 @@
 #include <functional>
 
 #define CAPDECK_VERSION "2.0.0"
-#define CAPDECK_BUILD "2026-11-07"  // build marker; bump per build.
+#define CAPDECK_BUILD "2026-11-08"  // build marker; bump per build.
 
 // ---------------------------------------------------------------- pins
 // Shared SPI bus (microSD + Cap LoRa-1262)
@@ -40,8 +40,8 @@
 #define SCR_W 240
 #define SCR_H 135
 #define BAR_H 14
-// Full-screen frame buffer. drawString() never lets text run off the edge: an overflowing line is
-// shortened with "..". Set canvas.fit = false for deliberate off-screen text.
+// Full-screen frame buffer. drawString() is wrapped so text can never run off the edge of the screen:
+// a line that would overflow is shortened with "..". Set canvas.fit = false for deliberate off-screen text.
 class FitCanvas : public M5Canvas {
  public:
   using M5Canvas::M5Canvas;
@@ -76,20 +76,31 @@ inline uint16_t RF = 0xFD20;     // amber
 inline uint16_t PORTAL = 0x07FF; // cyan
 inline uint16_t FILES = 0xFEA0;  // folder yellow
 inline uint16_t CONF = 0x9CF3;   // steel
+inline uint16_t BAR = 0x0020;    // status bar background (dark themes: near black; light themes: panel)
 }  // namespace col
-enum ThemeStyle : uint8_t { STYLE_PLAIN, STYLE_SYNTHWAVE, STYLE_MATRIX, STYLE_CRT, STYLE_EMBER, STYLE_SPORE };
+// Every theme is alive: each has its own animated wallpaper. "Still life" freezes them all to plain colour.
+enum ThemeStyle : uint8_t {
+  STYLE_PLAIN, STYLE_SYNTHWAVE, STYLE_MATRIX, STYLE_CRT, STYLE_EMBER,
+  STYLE_SPORE, STYLE_OCEAN, STYLE_STORM, STYLE_AURORA, STYLE_ABYSS, STYLE_VOID
+};
 struct Theme {
-  const char *name;
+  const char *name;   // living name (Ocean)
+  const char *still;  // still-life name (Blue)
   uint16_t bg, panel, panel2, text, dim, faint;
   uint16_t ha, ai, lora, mesh, gps, ir, rf, portal, files, conf;
   uint16_t accent;
   ThemeStyle style;
+  uint32_t led;  // RGB888 for the on-board LED
 };
 extern const Theme THEMES[];
 extern const int THEME_COUNT;
 void applyTheme(uint8_t idx);
-ThemeStyle themeStyle();
+ThemeStyle themeStyle();  // STYLE_PLAIN when still life / low battery
+const char *themeName(int idx);  // living or still-life name, whichever is active
 uint16_t accent();  // theme accent (user selectable)
+void drawBackdrop(uint32_t t);  // the live wallpaper (no-op in still life)
+bool themePicker();             // full-screen picker with live preview; true if a theme was chosen
+uint16_t blend565(uint16_t a, uint16_t b, float t);  // t=1 -> a
 
 // ---------------------------------------------------------------- input
 struct Key {
@@ -129,7 +140,10 @@ enum AppIcon : uint8_t {
   ICON_SCAN,
   ICON_MAP,
   ICON_MACRO,
-  ICON_DUCK,
+  ICON_MYCO,
+  ICON_FORAGE,
+  ICON_RHIZO,
+  ICON_NIGHTCAP,
   ICON_COUNT
 };
 void drawIcon(LovyanGFX &g, uint8_t icon, int cx, int cy, int size, uint16_t color, uint16_t bg = col::BG);
@@ -178,7 +192,12 @@ struct Settings {
   uint8_t brightness = 160;
   uint8_t accentIdx = 0;  // 0 = theme default
   uint8_t theme = 0;
-  uint8_t ledMode = 1;    // 0 off, 1 brand green, 2 theme accent, 3 breathe, 4 rainbow, 5 alerts-only
+  uint8_t ledMode = 1;    // 0 off, 1 theme colour, 2 breathe, 3 brand green, 4 rainbow, 5 alerts-only
+  bool stillLife = false; // freeze every live wallpaper to its plain colour
+  bool tips = true;       // longer hints for an app's first few opens
+  bool doze = true;       // light sleep (radios off) once the screen is off
+  uint8_t sporeMins = 30; // deep sleep after this long dozing; 0 = never
+  uint8_t wakeKey = 0;    // 0 Enter, 1 any key, 2 Fn+Enter (pocket mode)
   uint8_t ledBright = 90;
   bool meshListen = false;
   bool meshTx = false;     // allow sending our own packets (Client-Mute role; never rebroadcasts)
@@ -252,6 +271,19 @@ void loraApplyParams();
 void loraPoll();  // called from sysTick
 
 extern bool gpsSeen;  // any NMEA received
+// Satellites in view, straight from the GPS module's GSV/GSA sentences (real positions, not decoration).
+struct SatInfo {
+  char sys;        // 'G' GPS, 'R' GLONASS, 'E' Galileo, 'C' BeiDou, 'J' QZSS, '?' unknown
+  uint8_t prn;
+  int8_t elev;     // degrees above the horizon
+  uint16_t az;     // degrees from north
+  int8_t snr;      // dB-Hz, 0 = not tracked
+  bool used;       // part of the current fix
+  uint32_t seenMs;
+};
+extern SatInfo gpsSatTable[48];
+int gpsSatList(std::vector<SatInfo> &out);  // fresh satellites (seen in the last 15 s)
+String satName(const SatInfo &s);           // "GPS PRN 13", "BeiDou C22", "Michibiki J02"...
 bool gpsFix();
 int gpsSats();
 void gpsPoll();
@@ -266,8 +298,8 @@ extern const MeshPreset MESH_PRESETS[];
 extern const int MESH_PRESET_COUNT;
 bool meshPresetAllowed(const MeshPreset &p);  // false for Turbo presets on EU 868
 float meshFreq(const MeshPreset &p);  // the preset's frequency in the current band
-float bandCenter();                    // 915 or 868
-float bandLo();                        // sweep/edit range for the current band
+float bandCenter();
+float bandLo();
 float bandHi();
 const char *bandName();
 struct MeshNode {
@@ -293,6 +325,7 @@ extern std::vector<MeshText> meshTexts;
 extern uint32_t meshPackets, meshUndecoded;
 void meshHandlePacket(const uint8_t *buf, size_t len, float rssi, float snr);
 MeshNode *meshFind(uint32_t num);
+void meshNodeDetail(const MeshNode &n);  // app_mesh.cpp
 String meshName(uint32_t num);
 void meshLoad();
 void meshBuildChannels();  // call after preset/config changes
@@ -331,7 +364,55 @@ void appAI();
 void appPortal();
 void appScanner();
 void appMacros();
-void appDuck();  // zero-setup web lookups (DuckDuckGo + Wikipedia)
+void appMycorrhiza();  // downloads & lookups: DDG/Wikipedia, map regions, IR remotes, sky data
+void appNightcap();    // the sky above you
+void appRhizomorph();  // Reticulum radio: the Cardputer as an RNode for Sideband (BLE)
+extern bool rhizoRunning;
+void irLibrarySearch();  // mycorrhiza.cpp: search the Flipper-IRDB index, download on demand
+void appForage();      // collect spores: passive Wi-Fi / Bluetooth / mesh finds
+void appMap(int focusLayer = -1);  // one map: roads (lines) + finds and nodes (dots)
+
+// ---------------------------------------------------------------- forage ("collecting spores")
+// Every find is a mushroom. Plain label in brackets so nobody's lost.
+enum FindKind : uint8_t {
+  FK_SPORE,     // LoRa / mesh packet
+  FK_FRUIT,     // mesh node (fruiting body)
+  FK_PUFFBALL,  // Bluetooth device
+  FK_FAIRY,     // Wi-Fi network
+  FK_DEATHCAP,  // hidden Wi-Fi network
+  FK_MOREL,     // rare / strong find
+  FK_CORDYCEPS, // LoRaWAN device
+  FK_KIND_COUNT
+};
+struct Find {
+  FindKind kind;
+  String label;      // SSID / node / device name
+  uint8_t mac[6];
+  uint8_t macLen;    // 6 for wifi/ble, 0 for packet-only
+  int16_t rssi;
+  uint8_t channel;
+  uint8_t auth;      // Wi-Fi: 0 open, else secured
+  bool hasPos;
+  double lat, lon;
+  uint32_t firstMs, lastMs;
+  uint32_t firstUnix;
+  uint32_t hits;
+};
+extern std::vector<Find> forageFinds;   // this session's finds (map + list read it)
+extern bool forageRunning;               // true while a foray is active: keeps radios up but lets the screen sleep (pocket mode)
+const char *findName(FindKind k);       // "Fairy ring"
+const char *findPlain(FindKind k);      // "Wi-Fi network"
+void drawFindSymbol(LovyanGFX &g, int x, int y, FindKind k, uint16_t c);  // map.cpp
+extern double mapStartLat, mapStartLon;  // Mycorrhiza sets these to centre the map on a saved region
+// Web-Mercator helpers (shared by Map and Nightcap ground tracks)
+double lonToPx(double lon, int z);
+double latToPx(double lat, int z);
+double metersPerPx(double lat, int z);
+// shared downloader (Mycorrhiza)
+bool httpGetToString(const String &url, String &body, String &err, size_t maxBytes = 60000);
+bool httpGetToFile(const String &url, const char *path, String &err, std::function<void(size_t)> progress = nullptr);
+String urlEncode(const String &s, bool keepSlash = false);
+bool irFetchRemote(const String &relPath, String &localPath, String &err);  // Flipper-IRDB on demand
 // non-interactive senders used by the macro engine
 String irSendSignal(const String &path, const String &name);  // "" ok, else error
 String rfSendSaved(const String &name);
@@ -344,7 +425,22 @@ void setDevMode(bool on);
 // on-board RGB LED
 void ledApply();                               // (re)start from cfg.ledMode
 void ledTick();                                // animations; called from sysTick
-void ledFlash(uint8_t r, uint8_t g, uint8_t b, uint32_t ms = 350);  // brief alert blink
+void ledFlash(uint8_t r, uint8_t g, uint8_t b, uint32_t ms = 350);  // soft pulse (rate-limited, never strobes)
+void ledPulse(uint32_t rgb = 0);  // soft pulse; 0 = the theme's LED colour
+bool screenIsOff();               // power.cpp
+// ---------------------------------------------------------------- power: Dim -> Doze -> Spore mode
+void powerBootCheck();  // FIRST thing in setup(): decide whether a wake from Spore mode should really wake
+void powerAfterBoot();  // after the UI is up: handle a timed alarm wake
+bool powerOnKey();      // a key arrived; true if it only woke the screen (swallow it)
+void powerIdle();       // called while idle; dims, turns the screen off, dozes
+void stayAwake();       // apps doing real work call this in their loop (blocks Doze for a few seconds)
+void sporeMode(const char *why);  // deep sleep now
+void powerSetAlarm(uint32_t unixTime, const char *what);  // wake (even from sleep) to chime; 0 clears
+extern const char *WAKE_KEY_NAMES[];
+// ---------------------------------------------------------------- tips
+void tipsOpened(const char *app);  // counts opens; tips show for an app's first 3
+bool tipsActive();
+const char *tip(const char *longText, const char *shortText);
 extern const char *LED_MODE_NAMES[];
 #define LED_MODE_COUNT 6
 void drawChatView(const char *title, uint16_t color, uint8_t icon, const std::vector<std::pair<String, bool>> &chat, int scrollUp,

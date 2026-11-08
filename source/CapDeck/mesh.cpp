@@ -310,7 +310,7 @@ static MeshNode &touch(uint32_t num) {
     meshNodes.push_back(nn);
     n = &meshNodes.back();
     beep(2400, 15);
-    ledFlash(20, 230, 40);  // brand-green blip for a new node
+    ledPulse(0);  // soft pulse for a new node
   }
   return *n;
 }
@@ -409,7 +409,7 @@ void meshHandlePacket(const uint8_t *buf, size_t len, float rssi, float snr) {
         }
       }
       beep(3000, 40);
-      ledFlash(20, 230, 40);
+      ledPulse(0);
       break;
     }
     case 3: decodePosition(n, payload, plen); break;  // POSITION_APP

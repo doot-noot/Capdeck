@@ -346,7 +346,48 @@ static const char *LORA_HELP =
     "parameters and pass data through unchanged (transparent mode). Check the module's AT settings.\n\n"
     "Chat keys: type + ENTER, Fn+; / Fn+. scroll, DEL on empty line goes back.";
 
+// Launch flourish: "LoRaWAN" lands, then the W tips over into an M - LoRaMAN, the radio outlaw.
+static void loraManIntro() {
+  if (cfg.stillLife || lowPowerMode()) return;  // respect a frozen UI
+  const char *head = "LoRa";
+  canvas.setFont(&fonts::FreeSansBold12pt7b);
+  int hw = canvas.textWidth(head);
+  canvas.setFont(&fonts::Font0);
+  int baseX = (SCR_W - hw - 34) / 2, baseY = SCR_H / 2;
+  for (int f = 0; f <= 22; f++) {
+    canvas.fillScreen(col::BG);
+    drawBackdrop(millis());
+    canvas.setFont(&fonts::FreeSansBold12pt7b);
+    canvas.setTextDatum(middle_left);
+    canvas.setTextColor(col::LORA);
+    canvas.drawString(head, baseX, baseY);
+    // the "WAN"/"MAN" part: flip the W by scaling its vertical through zero and back
+    int wx = baseX + hw + 2;
+    float t = f / 22.0f;
+    const char *tail = t < 0.5f ? "WAN" : "MAN";
+    float flip = cosf(t * M_PI);  // 1 -> -1: at the midpoint the W is edge-on, then becomes an M
+    canvas.setTextColor(blend565(col::TEXT, col::LORA, t));
+    // draw the tail squashed vertically to fake the 3D flip
+    M5Canvas tmp(&M5Cardputer.Display);
+    tmp.setColorDepth(16);
+    if (tmp.createSprite(44, 26)) {
+      tmp.fillScreen(col::BG);
+      tmp.setFont(&fonts::FreeSansBold12pt7b);
+      tmp.setTextDatum(middle_left);
+      tmp.setTextColor(blend565(col::TEXT, col::LORA, t));
+      tmp.drawString(tail, 0, 13);
+      tmp.setPivot(22, 13);
+      tmp.pushRotateZoom(&canvas, wx + 22, baseY, 0, 1.0f, fabs(flip) < 0.08f ? 0.08f : fabs(flip), col::BG);
+      tmp.deleteSprite();
+    }
+    pushFrame();
+    delay(16);
+  }
+  delay(260);
+}
+
 void appLora() {
+  loraManIntro();
   int sel = 0;
   while (true) {
     std::vector<ListItem> items = {

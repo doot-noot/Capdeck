@@ -43,22 +43,30 @@ void appGps() {
     drawHeader("GPS", col::GPS, ICON_GPS);
     // radar
     int cx = 52, cy = 82, R = 44;
-    canvas.fillCircle(cx, cy, R, 0x0120);
-    for (int r = R; r > 0; r -= 15) canvas.drawCircle(cx, cy, r, 0x02A4);
-    canvas.drawFastHLine(cx - R, cy, R * 2, 0x02A4);
-    canvas.drawFastVLine(cx, cy - R, R * 2, 0x02A4);
+    canvas.fillCircle(cx, cy, R, blend565(col::GPS, col::BG, 0.10f));
+    for (int r = R; r > 0; r -= 15) canvas.drawCircle(cx, cy, r, blend565(col::GPS, col::BG, 0.30f));
+    canvas.drawFastHLine(cx - R, cy, R * 2, blend565(col::GPS, col::BG, 0.30f));
+    canvas.drawFastVLine(cx, cy - R, R * 2, blend565(col::GPS, col::BG, 0.30f));
     float a = (frame * 9 % 360) * DEG_TO_RAD;
     for (int t = 0; t < 14; t++) {
       float b = a - t * 0.05f;
-      canvas.drawLine(cx, cy, cx + cosf(b) * R, cy + sinf(b) * R, t == 0 ? col::GPS : (uint16_t)(0x0200 + (14 - t) * 0x40));
+      canvas.drawLine(cx, cy, cx + cosf(b) * R, cy + sinf(b) * R, t == 0 ? col::GPS : blend565(col::GPS, col::BG, (14 - t) / 14.0f * 0.55f));
     }
-    // pseudo satellite blips: one per satellite in view, deterministic positions
-    int sats = gpsSats();
-    for (int i = 0; i < sats && i < 16; i++) {
-      float sa = i * 2.39996f;
-      float sr = R * (0.35f + 0.6f * ((i * 37) % 10) / 10.0f);
-      canvas.fillCircle(cx + cosf(sa) * sr, cy + sinf(sa) * sr, 2, gpsFix() ? col::GPS : col::WARN);
+    // satellites where they really are: centre = straight up, edge = horizon, north up, east right
+    std::vector<SatInfo> sv;
+    gpsSatList(sv);
+    for (auto &st : sv) {
+      if (st.elev < 0) continue;
+      float rr = R * (90 - st.elev) / 90.0f, az = st.az * DEG_TO_RAD;
+      int sx = cx + (int)(sinf(az) * rr), sy = cy - (int)(cosf(az) * rr);
+      uint16_t c = st.used ? col::GPS : st.snr > 0 ? col::WARN : col::DIM;
+      canvas.fillCircle(sx, sy, st.snr > 30 ? 3 : 2, c);
+      if (st.used) canvas.drawCircle(sx, sy, 5, col::GPS);
     }
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextColor(col::DIM);
+    canvas.setTextDatum(middle_center);
+    canvas.drawString("N", cx, cy - R - 5);
     // readout
     canvas.setFont(&fonts::Font2);
     canvas.setTextDatum(top_left);
@@ -86,7 +94,7 @@ void appGps() {
       row("ALT", alt);
       String spd = !g.speed.isValid() ? "--" : imperial ? String(g.speed.mph(), 1) + " mph" : String(g.speed.kmph(), 1) + " km/h";
       row("SPD", spd);
-      row("SAT", String(sats) + (g.hdop.isValid() ? "  hdop " + String(g.hdop.hdop(), 1) : ""));
+      row("SAT", String(gpsSats()) + (g.hdop.isValid() ? "  hdop " + String(g.hdop.hdop(), 1) : ""));
     }
     canvas.setFont(&fonts::Font0);
     canvas.setTextDatum(bottom_right);
