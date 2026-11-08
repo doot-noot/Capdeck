@@ -11,7 +11,8 @@
 #include <vector>
 #include <functional>
 
-#define CAPDECK_VERSION "1.1.0"
+#define CAPDECK_VERSION "2.0.0"
+#define CAPDECK_BUILD "2026-11-07"  // build marker; bump per build.
 
 // ---------------------------------------------------------------- pins
 // Shared SPI bus (microSD + Cap LoRa-1262)
@@ -29,6 +30,8 @@
 #define PIN_GPS_TX 13
 // Built-in IR LED
 #define PIN_IR_TX 44
+// On-board RGB LED (WS2812 on the Stamp-S3A). Shares power with the backlight on the ADV.
+#define PIN_LED 21
 // Grove port (HY2.0-4P): yellow = G2, white = G1
 #define PIN_GROVE_YELLOW 2
 #define PIN_GROVE_WHITE 1
@@ -37,7 +40,17 @@
 #define SCR_W 240
 #define SCR_H 135
 #define BAR_H 14
-extern M5Canvas canvas;  // full-screen frame buffer
+// Full-screen frame buffer. drawString() never lets text run off the edge: an overflowing line is
+// shortened with "..". Set canvas.fit = false for deliberate off-screen text.
+class FitCanvas : public M5Canvas {
+ public:
+  using M5Canvas::M5Canvas;
+  using M5Canvas::drawString;
+  bool fit = true;
+  size_t drawString(const char *s, int32_t x, int32_t y);
+  size_t drawString(const String &s, int32_t x, int32_t y) { return drawString(s.c_str(), x, y); }
+};
+extern FitCanvas canvas;
 extern SPIClass sharedSPI;
 
 // ---------------------------------------------------------------- colours
@@ -64,7 +77,7 @@ inline uint16_t PORTAL = 0x07FF; // cyan
 inline uint16_t FILES = 0xFEA0;  // folder yellow
 inline uint16_t CONF = 0x9CF3;   // steel
 }  // namespace col
-enum ThemeStyle : uint8_t { STYLE_PLAIN, STYLE_SYNTHWAVE, STYLE_MATRIX, STYLE_CRT };
+enum ThemeStyle : uint8_t { STYLE_PLAIN, STYLE_SYNTHWAVE, STYLE_MATRIX, STYLE_CRT, STYLE_EMBER, STYLE_SPORE };
 struct Theme {
   const char *name;
   uint16_t bg, panel, panel2, text, dim, faint;
@@ -115,6 +128,8 @@ enum AppIcon : uint8_t {
   ICON_PORTAL,
   ICON_SCAN,
   ICON_MAP,
+  ICON_MACRO,
+  ICON_DUCK,
   ICON_COUNT
 };
 void drawIcon(LovyanGFX &g, uint8_t icon, int cx, int cy, int size, uint16_t color, uint16_t bg = col::BG);
@@ -140,6 +155,12 @@ bool textInput(const char *title, String &value, uint16_t color, bool secret = f
 void textViewer(const char *title, const String &text, uint16_t color);
 void wrapText(const String &text, int width, std::vector<String> &out);  // for current canvas font
 void beep(int freq = 2200, int ms = 25);
+// Truncates text (with "..") so it can never run off the edge of a 240px screen.
+String fitText(const String &s, int maxW);
+// Picks black or white text for whatever colour sits behind it, so nothing is ever unreadable.
+uint16_t textOn(uint16_t bg);
+bool batteryCharging();
+bool lowPowerMode();  // low battery & unplugged: drop the animated backdrops
 void drawBattery(LovyanGFX &g, int x, int y, int level, uint16_t c);
 void drawWifiGlyph(LovyanGFX &g, int x, int y, int bars, uint16_t c);
 String humanSize(uint64_t bytes);
@@ -157,19 +178,24 @@ struct Settings {
   uint8_t brightness = 160;
   uint8_t accentIdx = 0;  // 0 = theme default
   uint8_t theme = 0;
+  uint8_t ledMode = 1;    // 0 off, 1 brand green, 2 theme accent, 3 breathe, 4 rainbow, 5 alerts-only
+  uint8_t ledBright = 90;
   bool meshListen = false;
+  bool meshTx = false;     // allow sending our own packets (Client-Mute role; never rebroadcasts)
   uint8_t meshPreset = 0;  // index into MESH_PRESETS
+  String meshShort, meshLong;  // our node names on the mesh
   bool sound = true;
   uint8_t volume = 110;
   bool autoWifi = true;
   uint8_t dimSecs = 30;  // 0 = never
   int8_t rfRxPin = PIN_GROVE_WHITE;
-  int8_t rfTxPin = -1;
+  int8_t rfTxPin = PIN_GROVE_YELLOW;
   bool rfToHA = false;
   String wifiSsid, wifiPass;
   // loaded from /capdeck/config.json on SD
   String haUrl, haToken, haPipeline, haTts, haAgent;
   std::vector<HAButton> haButtons;
+  uint8_t band = 0;  // 0 = US 915 (902-928 MHz), 1 = EU 868 (863-870 MHz)
   float loraFreq = 915.0;
   float loraBw = 125.0;
   uint8_t loraSf = 9, loraCr = 7, loraSync = 0x12;
@@ -214,6 +240,13 @@ extern bool loraPresent;
 extern std::vector<LoraMsg> loraLog;
 extern int loraUnread;
 bool loraInit();
+extern String loraInitLog;
+extern float loraTcxoUsed;
+int loraRssiHealth(int samples, int *outMin, int *outMax);
+int loraTryTcxo(float tcxo, bool &healthy);
+void loraSaveTcxo(float v);
+uint16_t loraDeviceErrors();
+uint8_t loraChipStatus();
 bool loraSend(const String &payload);
 void loraApplyParams();
 void loraPoll();  // called from sysTick
@@ -231,6 +264,12 @@ struct MeshPreset {
 };
 extern const MeshPreset MESH_PRESETS[];
 extern const int MESH_PRESET_COUNT;
+bool meshPresetAllowed(const MeshPreset &p);  // false for Turbo presets on EU 868
+float meshFreq(const MeshPreset &p);  // the preset's frequency in the current band
+float bandCenter();                    // 915 or 868
+float bandLo();                        // sweep/edit range for the current band
+float bandHi();
+const char *bandName();
 struct MeshNode {
   uint32_t num = 0;
   String shortName, longName;
@@ -247,6 +286,7 @@ struct MeshText {
   uint32_t from;
   String text;
   uint32_t at;
+  String channel;
 };
 extern std::vector<MeshNode> meshNodes;
 extern std::vector<MeshText> meshTexts;
@@ -255,6 +295,13 @@ void meshHandlePacket(const uint8_t *buf, size_t len, float rssi, float snr);
 MeshNode *meshFind(uint32_t num);
 String meshName(uint32_t num);
 void meshLoad();
+void meshBuildChannels();  // call after preset/config changes
+// Meshtastic transmit (Client-Mute role: sends our own packets, never rebroadcasts)
+bool meshSendText(const String &channelName, const String &text);
+bool meshSendNodeInfo();
+bool meshSendPosition();
+uint32_t meshMyNum();
+void meshTxTick();
 void meshSaveIfDirty();
 bool myPosition(double &lat, double &lon);  // GPS fix, or last known
 double distanceM(double lat1, double lon1, double lat2, double lon2);
@@ -283,6 +330,23 @@ void appMesh();
 void appAI();
 void appPortal();
 void appScanner();
+void appMacros();
+void appDuck();  // zero-setup web lookups (DuckDuckGo + Wikipedia)
+// non-interactive senders used by the macro engine
+String irSendSignal(const String &path, const String &name);  // "" ok, else error
+String rfSendSaved(const String &name);
+String haCallService(const String &service, const String &entity, const String &dataJson);
+String haCallWebhook(const String &id);
+int macroCount();
+void macroEnsureTemplate();
+bool devMode();          // developer options toggle (NVS)
+void setDevMode(bool on);
+// on-board RGB LED
+void ledApply();                               // (re)start from cfg.ledMode
+void ledTick();                                // animations; called from sysTick
+void ledFlash(uint8_t r, uint8_t g, uint8_t b, uint32_t ms = 350);  // brief alert blink
+extern const char *LED_MODE_NAMES[];
+#define LED_MODE_COUNT 6
 void drawChatView(const char *title, uint16_t color, uint8_t icon, const std::vector<std::pair<String, bool>> &chat, int scrollUp,
                   const String *input, const String &status, uint16_t statusColor);
 // IR can be opened directly on a file from the file manager

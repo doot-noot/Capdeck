@@ -24,6 +24,9 @@
     { "name": "Movie scene", "service": "scene.turn_on", "entity": "scene.movie" },
     { "name": "Webhook test", "webhook": "capdeck_test" }
   ],
+  "mesh_channels": [
+    { "name": "ExampleChannel", "psk": "AQ==" }
+  ],
   "lora": {
     "freq_mhz": 915.0,
     "bw_khz": 125.0,

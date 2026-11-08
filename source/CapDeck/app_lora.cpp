@@ -177,7 +177,7 @@ static void ping() {
     canvas.setFont(&fonts::Font2);
     canvas.setTextDatum(middle_center);
     canvas.setTextColor(col::TEXT);
-    canvas.drawString("Sent \"" + msg + "\" - waiting", SCR_W / 2, 118);
+    canvas.drawString(fitText("Sent \"" + msg + "\" - waiting", SCR_W - 16), SCR_W / 2, 118);
     pushFrame();
     frame++;
     delay(40);
@@ -207,11 +207,13 @@ static bool saveLoraToConfig() {
 }
 
 static void radioSettings() {
-  const float freqs[] = {915.0, 906.875, 903.9, 923.0};
+  const float US[] = {915.0, 906.875, 903.9, 923.0}, EU[] = {868.1, 869.525, 868.3, 868.5};
+  const float *freqs = cfg.band == 1 ? EU : US;
   const float bws[] = {62.5, 125.0, 250.0, 500.0};
   int sel = 0;
   while (true) {
     std::vector<ListItem> items = {
+        {"Band", bandName(), 255, col::WARN},
         {"Frequency", String(cfg.loraFreq, 3) + " MHz", 255, 0},
         {"Bandwidth", String(cfg.loraBw, 1) + " kHz", 255, 0},
         {"Spreading factor", "SF" + String(cfg.loraSf), 255, 0},
@@ -223,13 +225,24 @@ static void radioSettings() {
     };
     int r = listMenu("Radio settings", col::LORA, items, sel, ICON_CONF);
     if (r < 0) return;
+    if (r == 0) {  // band: only flip if the user's antenna matches - transmitting off-band is illegal and can hurt the radio
+      if (confirmBox(String("Switch to ") + (cfg.band ? "US 915" : "EU 868") + "? Use the antenna for that band.", col::WARN)) {
+        cfg.band = cfg.band ? 0 : 1;
+        cfg.loraFreq = cfg.band ? 868.1f : 915.0f;
+        saveSettings();
+        meshBuildChannels();
+      }
+      loraApplyParams();
+      continue;
+    }
+    r--;
     switch (r) {
       case 0: {
         int i = 0;
         while (i < 4 && fabsf(freqs[i] - cfg.loraFreq) > 0.01f) i++;
         if (i >= 3) {
           String v = String(cfg.loraFreq, 3);
-          if (textInput("Frequency MHz (868-923)", v, col::LORA) && v.toFloat() >= 868 && v.toFloat() <= 923) cfg.loraFreq = v.toFloat();
+          if (textInput(cfg.band ? "Frequency MHz (863-870)" : "Frequency MHz (902-928)", v, col::LORA) && v.toFloat() >= bandLo() && v.toFloat() <= bandHi()) cfg.loraFreq = v.toFloat();
           else cfg.loraFreq = freqs[0];
         } else cfg.loraFreq = freqs[i + 1];
         break;
@@ -251,9 +264,80 @@ static void radioSettings() {
   }
 }
 
+// ------------------------------------------------------------------ radio self-test
+static String decodeErrors(uint16_t e) {
+  if (e == 0) return "none";
+  const char *names[] = {"RC64K cal", "RC13M cal", "PLL cal", "ADC cal", "IMG cal", "XOSC/TCXO start", "PLL lock", "?", "PA ramp"};
+  String s;
+  for (int i = 0; i < 9; i++)
+    if (e & (1 << i)) s += String(s.length() ? ", " : "") + names[i];
+  return s;
+}
+
+static void radioTest() {
+  if (!loraPresent && !loraInit()) {
+    textViewer("Radio test", "The Cap LoRa-1262 didn't answer on the SPI bus.\n\n" + loraInitLog +
+               "\nCheck the Cap is fully seated on the header, then reboot.", col::LORA);
+    return;
+  }
+  RadioMode prev = radioMode;
+  loraSetMode(RM_SCAN);
+  uint32_t last = 0;
+  int mn = 0, mx = 0, good = 0;
+  while (true) {
+    Key k = readKey();
+    if (k.back) break;
+    if (k.ch == 't' || k.enter) {
+      drawHeader("Testing TCXO settings...", col::LORA, ICON_SCAN);
+      pushFrame();
+      String rep = "Each setting: does the chip start, and does the receiver give real readings?\n\n";
+      const float opts[] = {1.8f, 3.3f, 1.6f, 3.0f, 2.2f, 0.0f};
+      for (float o : opts) {
+        bool h;
+        int st = loraTryTcxo(o, h);
+        rep += "TCXO " + String(o, 1) + " V: " + (st == 0 ? (h ? "WORKS" : "starts, RX dead") : "begin error " + String(st)) + "\n";
+        M5Cardputer.update();
+      }
+      loraInit();  // picks the first healthy setting and saves it
+      loraSetMode(RM_SCAN);
+      rep += "\nNow using " + String(loraTcxoUsed, 1) + " V.\n" + loraInitLog;
+      textViewer("TCXO test", rep, col::LORA);
+      last = 0;
+    }
+    if (millis() - last < 500) { delay(10); continue; }
+    last = millis();
+    good = loraRssiHealth(16, &mn, &mx);
+    uint8_t st = loraChipStatus();
+    uint16_t er = loraDeviceErrors();
+    drawHeader("Radio test", col::LORA, ICON_SCAN);
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextDatum(top_left);
+    int y = BAR_H + 22;
+    auto line = [&](const String &a, const String &b, uint16_t c) {
+      canvas.setTextColor(col::DIM);
+      canvas.drawString(a, 6, y);
+      canvas.setTextColor(c);
+      canvas.drawString(b, 84, y);
+      y += 11;
+    };
+    bool ok = good >= 12;
+    line("Receiver", ok ? "LOOKS ALIVE" : "DEAD (constant reading)", ok ? col::OK : col::BAD);
+    line(String("RSSI ") + String((int)bandCenter()) + " MHz", String(-mx / 2.0f, 1) + " .. " + String(-mn / 2.0f, 1) + " dBm", col::TEXT);
+    line("Raw min/max", String(mn) + " / " + String(mx) + "  (" + String(good) + "/16 ok)", col::TEXT);
+    line("TCXO", String(loraTcxoUsed, 1) + " V", col::TEXT);
+    line("Chip mode", String((st >> 4) & 7) + "  cmd " + String((st >> 1) & 7), col::TEXT);
+    line("Errors", decodeErrors(er), er ? col::WARN : col::OK);
+    canvas.setTextDatum(bottom_center);
+    canvas.setTextColor(col::LORA);
+    canvas.drawString("T / ENTER: test all TCXO settings", SCR_W / 2, SCR_H - 2);
+    pushFrame();
+  }
+  loraSetMode(prev == RM_SCAN ? RM_CAPDECK : prev);
+}
+
 static const char *LORA_HELP =
     "Plain point-to-point LoRa on the Cap LoRa-1262 (SX1262, 868-923 MHz). In the US "
-    "stay in 902-928 MHz - 915.0 is a good default.\n\n"
+    "stay in 902-928 MHz - 915.0 is a good default. In Europe switch Band to EU 868 (863-870 MHz) and fit an 868 antenna.\n\n"
     "Every CapDeck with the same frequency, bandwidth, SF, coding rate and sync word can "
     "chat. Messages arriving anywhere in CapDeck beep and show an envelope in the status bar. "
     "They are also logged to /capdeck/lora/log.txt.\n\n"
@@ -270,6 +354,7 @@ void appLora() {
         {"Monitor", "", ICON_DISPLAY, 0},
         {"Ping", "", ICON_WIFI, 0},
         {"Scanner", "spectrum + hunter", ICON_SCAN, 0},
+        {"Radio test", "", ICON_INFO, 0},
         {"Radio settings", String(cfg.loraFreq, 1), ICON_CONF, 0},
         {"Help", !loraPresent ? "no cap" : radioMode == RM_MESH ? "mesh mode" : "cap ok", ICON_INFO, 0},
     };
@@ -280,8 +365,9 @@ void appLora() {
       case 1: monitor(); break;
       case 2: ping(); break;
       case 3: appScanner(); break;
-      case 4: if (needCap()) radioSettings(); break;
-      case 5: textViewer("LoRa help", LORA_HELP, col::LORA); break;
+      case 4: radioTest(); break;
+      case 5: if (needCap()) radioSettings(); break;
+      case 6: textViewer("LoRa help", LORA_HELP, col::LORA); break;
     }
   }
 }

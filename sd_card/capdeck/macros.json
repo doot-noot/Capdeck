@@ -1,0 +1,33 @@
+{
+  "_help": "Each macro is a name and a list of steps. One tap runs them top to bottom. Edit me from the Portal!",
+  "macros": [
+    {
+      "name": "Movie Night",
+      "icon": "movie",
+      "steps": [
+        { "say": "Lights, camera..." },
+        { "ha": "light.turn_off", "entity": "light.living_room" },
+        { "scene": "scene.movie" },
+        { "wait": 1 },
+        { "ir": "/capdeck/ir/My_Remotes/TCL_TV/TCL_Power_Try_All.ir", "button": "Power" },
+        { "beep": true }
+      ]
+    },
+    {
+      "name": "Good Morning",
+      "icon": "morning",
+      "steps": [
+        { "ha": "light.turn_on", "entity": "light.bedroom", "data": { "brightness_pct": 60 } },
+        { "say": "Morning!" }
+      ]
+    },
+    {
+      "name": "On My Way",
+      "icon": "lora",
+      "steps": [
+        { "lora": "Heading home now" },
+        { "beep": true }
+      ]
+    }
+  ]
+}

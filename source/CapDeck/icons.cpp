@@ -227,6 +227,16 @@ void iconScan(const Pen &p) {
   p.ring(0, 28, 34, 2.5f, 215, 325);
 }
 
+// Macro: lightning bolt (one tap, many actions)
+void iconMacro(const Pen &p) {
+  // bold zig-zag bolt
+  const float bolt[7][2] = {{6, -26}, {-12, 4}, {-1, 4}, {-6, 26}, {14, -6}, {2, -6}, {8, -26}};
+  for (int i = 0; i < 6; i++) p.line(bolt[i][0], bolt[i][1], bolt[i + 1][0], bolt[i + 1][1], 3.0f);
+  // fill the body with two triangles so it reads as solid at small sizes
+  p.tri(6, -26, -12, 4, 2, -6);
+  p.tri(-6, 26, 14, -6, -1, 4);
+}
+
 // Map: folded paper map with a pin
 void iconMap(const Pen &p) {
   p.tri(-28, -16, -10, -22, -10, 22);
@@ -239,6 +249,15 @@ void iconMap(const Pen &p) {
   p.disc(1, -6, 6.5f);
   p.tri(-5, -3, 7, -3, 1, 8);
   p.disc(1, -6, 2.5f, p.bg);
+}
+
+// Duck: zero-setup web lookups
+void iconDuck(const Pen &p) {
+  p.disc(4, 12, 20);                // body
+  p.disc(-8, -12, 13);              // head
+  p.tri(2, -17, 30, -11, 2, -5);    // bill
+  p.disc(10, 14, 9, p.bg);          // wing
+  p.disc(-11, -15, 3.0f, p.bg);     // eye
 }
 }  // namespace
 
@@ -264,5 +283,7 @@ void drawIcon(LovyanGFX &g, uint8_t icon, int cx, int cy, int size, uint16_t col
     case ICON_PORTAL: iconPortal(p); break;
     case ICON_SCAN: iconScan(p); break;
     case ICON_MAP: iconMap(p); break;
+    case ICON_MACRO: iconMacro(p); break;
+    case ICON_DUCK: iconDuck(p); break;
   }
 }

@@ -115,6 +115,23 @@ static void receiveScreen() {
       }
       dirty = true;
     }
+    if (k.ch == 's' && !log.empty()) {  // replay the last code through the transmitter
+      if (cfg.rfTxPin < 0) toast("Set a transmitter pin in Pin setup", col::WARN, 1200);
+      else {
+        RfCode c = log.back().first;
+        rxStop();
+        rc.enableTransmit(cfg.rfTxPin);
+        rc.setProtocol(c.proto ? c.proto : 1);
+        if (c.pulse) rc.setPulseLength(c.pulse);
+        rc.setRepeatTransmit(8);
+        rc.send(c.value, c.bits);
+        rc.disableTransmit();
+        rxStart();
+        beep(3000, 20);
+        toast("Replayed " + codeStr(c), col::OK, 700);
+      }
+      dirty = true;
+    }
     if (k.ch == 'h' && !log.empty()) {
       if (!haReady()) toast("Home Assistant isn't set up in config.json", col::WARN);
       else if (wifiWait(12000, "Wi-Fi")) {
@@ -142,7 +159,7 @@ static void receiveScreen() {
       canvas.drawString("Listening... press a remote", SCR_W / 2, 106);
       canvas.setFont(&fonts::Font0);
       canvas.setTextColor(col::DIM);
-      canvas.drawString(cfg.rfToHA ? "forwarding to Home Assistant" : "ENTER save  H send to HA  DEL back", SCR_W / 2, 124);
+      canvas.drawString(cfg.rfToHA ? "forwarding to Home Assistant" : "ENTER save  S replay  H to HA  DEL back", SCR_W / 2, 124);
     } else {
       auto &last = log.back();
       canvas.fillRoundRect(4, 36, SCR_W - 8, 36, 6, col::PANEL);
@@ -165,7 +182,7 @@ static void receiveScreen() {
       }
       canvas.setTextDatum(bottom_right);
       canvas.setTextColor(col::FAINT);
-      canvas.drawString("ENTER save  H to HA", SCR_W - 4, SCR_H - 1);
+      canvas.drawString("ENTER save  S replay  H to HA", SCR_W - 4, SCR_H - 1);
     }
     pushFrame();
   }
@@ -254,6 +271,24 @@ static void savedScreen() {
   }
 }
 
+// Non-interactive: transmit a saved code by name. Used by the Macros engine.
+String rfSendSaved(const String &name) {
+  if (cfg.rfTxPin < 0) return "No 433 MHz transmitter pin set (RF 433 > Pin setup)";
+  auto codes = loadCodes();
+  for (auto &c : codes) {
+    if (!c.name.equalsIgnoreCase(name)) continue;
+    rxStop();
+    rc.enableTransmit(cfg.rfTxPin);
+    rc.setProtocol(c.proto ? c.proto : 1);
+    if (c.pulse) rc.setPulseLength(c.pulse);
+    rc.setRepeatTransmit(8);
+    rc.send(c.value, c.bits);
+    rc.disableTransmit();
+    return "";
+  }
+  return "No saved RF code named \"" + name + "\"";
+}
+
 static String pinName(int8_t p) {
   if (p < 0) return "none";
   if (p == PIN_GROVE_YELLOW) return "G2 (Grove yellow)";
@@ -281,18 +316,20 @@ static void pinSetup() {
 }
 
 static const char *RF_HELP =
-    "WIRING (RX470C receiver -> Grove port)\n"
-    "  GND  -> black\n"
-    "  VCC  -> red (5V)\n"
-    "  DATA -> white (G1) through a divider:\n"
-    "          DATA -10k-+-20k- GND, G1 at the +\n\n"
+    "WIRING (both modules share the Grove port)\n"
+    "  GND  (both)     -> black\n"
+    "  VCC  (both)     -> red (5V)\n"
+    "  Receiver DATA   -> white (G1) through a divider:\n"
+    "          DATA -10k-+-20k- GND, G1 at the +\n"
+    "  Transmitter DATA -> yellow (G2), direct\n"
+    "Antennas: the coils work; a straight 17.3 cm wire on each works better.\n\n"
     "The Grove port gives 5 V. Powered from 5 V the receiver's DATA line swings "
     "to 5 V, and the ESP32-S3 pins are 3.3 V only - so use the divider (or power "
     "the receiver from 3.3 V if your module allows).\n\n"
     "RECEIVE decodes common fixed-code remotes (doorbells, outlets, PT2262/EV1527 "
     "fobs). ENTER saves a code, H sends it to Home Assistant webhook 'capdeck_rf'.\n\n"
     "SCOPE shows the raw data line. , and / zoom, SPACE holds.\n\n"
-    "REPLAY needs a separate 433 MHz transmitter on the other Grove pin. Only replay "
+    "REPLAY: press S on the receive screen to resend the last code, or pick one in Saved codes. Only replay "
     "your own devices. Rolling-code remotes (cars, garage doors) won't work.";
 
 void appRF() {

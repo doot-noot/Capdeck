@@ -2,7 +2,9 @@
 #include "core.h"
 #include <RadioLib.h>
 
-static const float F0 = 902.0f, F1 = 928.0f;
+// sweep window: US 902-928, EU 860-886 (covers 863-870 with room to see neighbours)
+static float F0 = 902.0f, F1 = 928.0f;
+static void setWindow() { F0 = cfg.band == 1 ? 860.0f : 902.0f; F1 = F0 + 26.0f; }
 static const int BINS = 104;  // 250 kHz bins
 static float binFreq(int i) { return F0 + 0.125f + i * 0.25f; }
 
@@ -20,7 +22,8 @@ static void spectrum() {
   loraSetMode(RM_SCAN);
   r->standby();
   r->setBandwidth(125.0);
-  r->calibrateImage(915.0);
+  setWindow();
+  r->calibrateImage(bandCenter());
   static float cur[BINS], peak[BINS];
   static uint8_t fall[44][BINS];
   for (int i = 0; i < BINS; i++) { cur[i] = -140; peak[i] = -140; }
@@ -41,10 +44,14 @@ static void spectrum() {
         r->standby();
         r->setFrequency(binFreq(i), true);
         r->startReceive();
-        delayMicroseconds(700);
-        float v = r->getRSSI(false);
-        float v2 = r->getRSSI(false);
-        cur[i] = max(v, v2);
+        delayMicroseconds(1200);
+        float v = -140;
+        for (int s = 0; s < 3; s++) {
+          float x = r->getRSSI(false);
+          if (x > -127.4f && x < -1) v = max(v, x);  // -127.5 = raw 255 = no real reading
+          delayMicroseconds(150);
+        }
+        cur[i] = v;
         if (cur[i] > peak[i]) peak[i] = cur[i];
         else peak[i] -= 0.4f;
         if ((i & 15) == 0) sysTick();
@@ -54,7 +61,9 @@ static void spectrum() {
       sweeps++;
     }
     canvas.fillScreen(col::BG);
-    drawStatusBar(paused ? "SCAN - PAUSED" : "SPECTRUM 902-928", col::LORA);
+    bool allDead = true;
+    for (int i = 0; i < BINS && allDead; i++) allDead = cur[i] <= -139;
+    drawStatusBar(paused ? "SCAN - PAUSED" : allDead && sweeps > 1 ? "NO READINGS - LoRa > Radio test" : (String("SPECTRUM ") + String((int)F0) + "-" + String((int)F1)).c_str(), allDead ? col::BAD : col::LORA);
     // axes
     canvas.setFont(&fonts::Font0);
     canvas.setTextColor(col::DIM);
@@ -89,11 +98,11 @@ static void spectrum() {
     canvas.drawString(rd, 2, wy + 33);
     canvas.setTextColor(col::DIM);
     canvas.setTextDatum(bottom_left);
-    canvas.drawString("902", gx, SCR_H);
+    canvas.drawString(String((int)F0), gx, SCR_H);
     canvas.setTextDatum(bottom_center);
     canvas.drawString(", / tune  SPACE hold  R reset", gx + BINS, SCR_H);
     canvas.setTextDatum(bottom_right);
-    canvas.drawString("928", gx + BINS * 2, SCR_H);
+    canvas.drawString(String((int)F1), gx + BINS * 2, SCR_H);
     pushFrame();
     if (paused) delay(30);
   }
@@ -115,9 +124,10 @@ static void hunter() {
   SX1262 *r = loraRadio();
   std::vector<Target> t;
   for (int i = 0; i < MESH_PRESET_COUNT; i++) {
+    if (!meshPresetAllowed(MESH_PRESETS[i])) continue;
     Target x;
     x.name = String("Mesh ") + MESH_PRESETS[i].name;
-    x.freqs[0] = MESH_PRESETS[i].freq;
+    x.freqs[0] = meshFreq(MESH_PRESETS[i]);
     x.nf = 1;
     x.bw = MESH_PRESETS[i].bw;
     x.sf = MESH_PRESETS[i].sf;
@@ -127,7 +137,7 @@ static void hunter() {
     Target x;
     x.name = "LoRaWAN SF" + String(sf);
     x.nf = 8;
-    for (int c = 0; c < 8; c++) x.freqs[c] = 903.9f + c * 0.2f;
+    for (int c = 0; c < 8; c++) x.freqs[c] = cfg.band == 1 ? (c < 5 ? 867.1f + c * 0.2f : 868.1f + (c - 5) * 0.2f) : 903.9f + c * 0.2f;  // EU868: 867.1-867.9 + 868.1/.3/.5
     x.bw = 125;
     x.sf = sf;
     t.push_back(x);
@@ -143,7 +153,8 @@ static void hunter() {
   }
   loraSetMode(RM_SCAN);
   r->standby();
-  r->calibrateImage(915.0);
+  setWindow();
+  r->calibrateImage(bandCenter());
   int scroll = 0, sel = 0;
   uint32_t rounds = 0, lastDraw = 0;
   size_t ti = 0;
@@ -198,15 +209,15 @@ static void hunter() {
       if (&x == &t[ti]) canvas.drawFastHLine(14, y + 8, 40, col::LORA);
     }
     canvas.setTextDatum(bottom_center);
-    canvas.setTextColor(col::FAINT);
-    canvas.drawString("channel activity detection  ; . select  R reset", SCR_W / 2, SCR_H);
+    canvas.setTextColor(col::DIM);  // was FAINT: invisible on the dark themes
+    canvas.drawString(fitText("; . select   R reset", SCR_W - 8), SCR_W / 2, SCR_H);
     pushFrame();
   }
   loraSetMode(cfg.meshListen ? RM_MESH : RM_CAPDECK);
 }
 
 static const char *SCAN_HELP =
-    "SPECTRUM sweeps 902-928 MHz in 250 kHz steps and shows signal strength (bars), peak hold "
+    "SPECTRUM sweeps 902-928 MHz (EU band: 860-886) in 250 kHz steps and shows signal strength (bars), peak hold "
     "(yellow ticks) and a waterfall of the last ~40 sweeps. The faint vertical line is Meshtastic LongFast "
     "(906.875). Bursts that show up only in the waterfall are short packets.\n\n"
     "HUNTER cycles channel-activity-detection over common LoRa setups (Meshtastic presets on their US "
@@ -221,7 +232,7 @@ void appScanner() {
   }
   int sel = 0;
   while (true) {
-    std::vector<ListItem> items = {{"Spectrum + waterfall", "902-928", ICON_SCAN, 0},
+    std::vector<ListItem> items = {{"Spectrum + waterfall", cfg.band == 1 ? "860-886" : "902-928", ICON_SCAN, 0},
                                    {"LoRa hunter", "CAD", ICON_LORA, 0},
                                    {"Help", "", ICON_INFO, 0}};
     int r = listMenu("LoRa scanner", col::LORA, items, sel, ICON_SCAN);

@@ -17,15 +17,21 @@ void loadSettings() {
   cfg.brightness = prefs.getUChar("bright", 160);
   cfg.accentIdx = prefs.getUChar("accent2", 0);
   cfg.theme = prefs.getUChar("theme", 0);
+  cfg.ledMode = prefs.getUChar("ledmode", 1);
+  cfg.ledBright = prefs.getUChar("ledbri", 90);
   cfg.meshListen = prefs.getBool("meshon", false);
+  cfg.meshTx = prefs.getBool("meshtx", false);
+  cfg.meshShort = prefs.getString("meshshort", "");
+  cfg.meshLong = prefs.getString("meshlong", "");
   cfg.meshPreset = prefs.getUChar("meshpre", 0);
+  cfg.band = prefs.getUChar("band", 0);
   cfg.portalPass = prefs.getString("ppass", "");
   cfg.sound = prefs.getBool("sound", true);
   cfg.volume = prefs.getUChar("vol", 110);
   cfg.autoWifi = prefs.getBool("autowifi", true);
   cfg.dimSecs = prefs.getUChar("dim", 30);
   cfg.rfRxPin = prefs.getChar("rfrx", PIN_GROVE_WHITE);
-  cfg.rfTxPin = prefs.getChar("rftx", -1);
+  cfg.rfTxPin = prefs.getChar("rftx", PIN_GROVE_YELLOW);
   cfg.rfToHA = prefs.getBool("rf2ha", false);
   cfg.wifiSsid = prefs.getString("ssid", "");
   cfg.wifiPass = prefs.getString("pass", "");
@@ -37,8 +43,14 @@ void saveSettings() {
   prefs.putUChar("bright", cfg.brightness);
   prefs.putUChar("accent2", cfg.accentIdx);
   prefs.putUChar("theme", cfg.theme);
+  prefs.putUChar("ledmode", cfg.ledMode);
+  prefs.putUChar("ledbri", cfg.ledBright);
   prefs.putBool("meshon", cfg.meshListen);
+  prefs.putBool("meshtx", cfg.meshTx);
+  prefs.putString("meshshort", cfg.meshShort);
+  prefs.putString("meshlong", cfg.meshLong);
   prefs.putUChar("meshpre", cfg.meshPreset);
+  prefs.putUChar("band", cfg.band);
   prefs.putString("ppass", cfg.portalPass);
   prefs.putBool("sound", cfg.sound);
   prefs.putUChar("vol", cfg.volume);
@@ -53,6 +65,26 @@ void saveSettings() {
 }
 
 void applyBrightness() { M5Cardputer.Display.setBrightness(cfg.brightness); }
+
+// ------------------------------------------------------------------ developer mode
+static bool devOn = false;
+static bool devLoaded = false;
+bool devMode() {
+  if (!devLoaded) {
+    prefs.begin("capdeck", true);
+    devOn = prefs.getBool("dev", false);
+    prefs.end();
+    devLoaded = true;
+  }
+  return devOn;
+}
+void setDevMode(bool on) {
+  devOn = on;
+  devLoaded = true;
+  prefs.begin("capdeck", false);
+  prefs.putBool("dev", on);
+  prefs.end();
+}
 
 // ------------------------------------------------------------------ SD config file
 static const char *CONFIG_PATH = "/capdeck/config.json";
@@ -82,6 +114,9 @@ static const char *CONFIG_TEMPLATE = R"JSON({
     { "name": "Fish tank plug", "service": "switch.toggle", "entity": "switch.fish_tank" },
     { "name": "Movie scene", "service": "scene.turn_on", "entity": "scene.movie" },
     { "name": "Webhook test", "webhook": "capdeck_test" }
+  ],
+  "mesh_channels": [
+    { "name": "ExampleChannel", "psk": "AQ==" }
   ],
   "lora": {
     "freq_mhz": 915.0,
@@ -151,6 +186,8 @@ bool loadConfigFile() {
   cfg.aiSystem = ai["system"] | "You are a helpful assistant answering on a tiny handheld screen. Keep replies short and plain-text.";
   JsonObject lo = doc["lora"];
   cfg.loraFreq = lo["freq_mhz"] | 915.0f;
+  if (cfg.band == 1 && cfg.loraFreq > 900) cfg.loraFreq = 868.1f;  // keep config.json inside the chosen band
+  if (cfg.band == 0 && cfg.loraFreq < 900) cfg.loraFreq = 915.0f;
   cfg.loraBw = lo["bw_khz"] | 125.0f;
   cfg.loraSf = lo["sf"] | 9;
   cfg.loraCr = lo["cr"] | 7;
@@ -325,7 +362,17 @@ void gpsPoll() {
 }
 
 // ------------------------------------------------------------------ LoRa
-static SX1262 *radio = nullptr;
+// expose a few protected diagnostics from RadioLib
+class CapRadio : public SX1262 {
+ public:
+  explicit CapRadio(Module *m) : SX1262(m) {}
+  using SX126x::getStatus;
+  using SX126x::getDeviceErrors;
+  using SX126x::clearDeviceErrors;
+};
+static CapRadio *radio = nullptr;
+String loraInitLog;     // what happened at init, shown in LoRa > Radio test
+float loraTcxoUsed = -1;
 bool loraPresent = false;
 std::vector<LoraMsg> loraLog;
 int loraUnread = 0;
@@ -337,8 +384,9 @@ RadioMode radioMode = RM_CAPDECK;
 
 static void applyRadioParams() {
   if (radioMode == RM_MESH) {
+    if (!meshPresetAllowed(MESH_PRESETS[cfg.meshPreset % MESH_PRESET_COUNT])) cfg.meshPreset = 0;  // LongFast
     const MeshPreset &p = MESH_PRESETS[cfg.meshPreset % MESH_PRESET_COUNT];
-    radio->setFrequency(p.freq);
+    radio->setFrequency(meshFreq(p));
     radio->setBandwidth(p.bw);
     radio->setSpreadingFactor(p.sf);
     radio->setCodingRate(p.cr);
@@ -374,14 +422,86 @@ void loraSetMode(RadioMode m) {
   radio->startReceive();
 }
 
-bool loraInit() {
-  if (!radio) radio = new SX1262(new Module(PIN_LORA_CS, PIN_LORA_IRQ, PIN_LORA_RST, PIN_LORA_BUSY, sharedSPI));
-  int st = radio->begin(cfg.loraFreq, cfg.loraBw, cfg.loraSf, cfg.loraCr, cfg.loraSync, cfg.loraPower, 8, 1.8, false);
-  if (st != RADIOLIB_ERR_NONE) {
-    // some modules have no TCXO - retry without it
-    st = radio->begin(cfg.loraFreq, cfg.loraBw, cfg.loraSf, cfg.loraCr, cfg.loraSync, cfg.loraPower, 8, 0, false);
+// Raw instantaneous RSSI readings in RX. A working radio gives a noisy floor (around 200-250 raw);
+// a dead/unclocked one returns a constant 255 (or 0).
+int loraRssiHealth(int samples, int *outMin, int *outMax) {
+  if (!radio) return 0;
+  radio->standby();
+  radio->setFrequency(bandCenter());
+  radio->startReceive();
+  delay(5);
+  int mn = 999, mx = -1, dead = 0;
+  for (int i = 0; i < samples; i++) {
+    delayMicroseconds(800);
+    float v = radio->getRSSI(false);
+    int raw = (int)lroundf(-v * 2);
+    if (raw >= 255 || raw <= 0) dead++;
+    mn = min(mn, raw);
+    mx = max(mx, raw);
   }
-  loraPresent = (st == RADIOLIB_ERR_NONE);
+  if (outMin) *outMin = mn;
+  if (outMax) *outMax = mx;
+  return samples - dead;  // number of plausible readings
+}
+
+uint16_t loraDeviceErrors() { return radio ? radio->getDeviceErrors() : 0xFFFF; }
+uint8_t loraChipStatus() { return radio ? radio->getStatus() : 0xFF; }
+
+// Try one TCXO setting. Returns RadioLib status; healthy=true when RX readings look real.
+int loraTryTcxo(float tcxo, bool &healthy) {
+  if (!radio) radio = new CapRadio(new Module(PIN_LORA_CS, PIN_LORA_IRQ, PIN_LORA_RST, PIN_LORA_BUSY, sharedSPI));
+  healthy = false;
+  int st = radio->begin(915.0, 125.0, 9, 7, 0x12, 10, 8, tcxo, false);
+  if (st != RADIOLIB_ERR_NONE) return st;
+  radio->setDio2AsRfSwitch(true);
+  radio->clearDeviceErrors();
+  int good = loraRssiHealth(24, nullptr, nullptr);
+  uint16_t errs = radio->getDeviceErrors();
+  healthy = good >= 20 && !(errs & 0x0020);  // bit5 = XOSC start error (TCXO not running)
+  return st;
+}
+
+static Preferences rprefs;
+static float savedTcxo() {
+  rprefs.begin("capdeck", true);
+  float v = rprefs.getFloat("tcxo", 1.8f);
+  rprefs.end();
+  return v;
+}
+void loraSaveTcxo(float v) {
+  rprefs.begin("capdeck", false);
+  rprefs.putFloat("tcxo", v);
+  rprefs.end();
+}
+
+bool loraInit() {
+  // Cap LoRa-1262 uses a 1.8 V TCXO. Try the saved choice first, then the usual suspects, and only accept
+  // a setting where the receiver actually produces real RSSI readings.
+  float order[] = {savedTcxo(), 1.8f, 3.3f, 1.6f, 3.0f, 2.2f, 0.0f};
+  loraInitLog = "";
+  loraPresent = false;
+  int firstOk = -1;
+  for (int i = 0; i < 7; i++) {
+    if (i > 0 && order[i] == order[0]) continue;
+    bool healthy;
+    int st = loraTryTcxo(order[i], healthy);
+    loraInitLog += "TCXO " + String(order[i], 1) + "V: begin " + String(st) + (st == 0 ? (healthy ? "  RX ok" : "  RX dead") : "") + "\n";
+    if (st == RADIOLIB_ERR_CHIP_NOT_FOUND) break;  // nothing on the bus - no point retrying
+    if (st == 0 && firstOk < 0) firstOk = i;
+    if (st == 0 && healthy) {
+      loraTcxoUsed = order[i];
+      loraPresent = true;
+      if (order[i] != order[0]) loraSaveTcxo(order[i]);
+      break;
+    }
+  }
+  if (!loraPresent && firstOk >= 0) {  // chip answers but RX looks dead: keep it usable, flag it
+    bool h;
+    loraTryTcxo(order[firstOk], h);
+    loraTcxoUsed = order[firstOk];
+    loraPresent = true;
+    loraInitLog += "WARNING: receiver readings look dead\n";
+  }
   if (!loraPresent) return false;
   radio->setDio2AsRfSwitch(true);
   radio->setCurrentLimit(140);
@@ -429,6 +549,7 @@ void loraPoll() {
       loraLog.push_back({s, radio->getRSSI(), radio->getSNR(), false, millis()});
       if (loraLog.size() > 60) loraLog.erase(loraLog.begin());
       loraUnread++;
+      ledFlash(140, 0, 255);  // violet blip for LoRa
       beep(3000, 40);
       if (sdOK) {
         File f = SD.open("/capdeck/lora/log.txt", FILE_APPEND);
@@ -498,6 +619,8 @@ void sysTick() {
   loraPoll();
   wifiTick();
   portalPoll();
+  ledTick();
+  meshTxTick();
   static uint32_t lastMeshSave = 0;
   if (millis() - lastMeshSave > 30000) {
     lastMeshSave = millis();

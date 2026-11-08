@@ -1,15 +1,57 @@
 // CapDeck - UI toolkit: input, status bar, lists, text entry, popups
 #include "core.h"
 
-M5Canvas canvas(&M5Cardputer.Display);
+FitCanvas canvas(&M5Cardputer.Display);
+
+// Any line that would run off the screen is shortened with ".." instead of being cut mid-letter.
+size_t FitCanvas::drawString(const char *s, int32_t x, int32_t y) {
+  if (!fit || !s || !*s || x < 0 || x > width()) return M5Canvas::drawString(s, x, y);
+  const int32_t W = width(), w = textWidth(s);
+  const int h = getTextDatum() & 3;  // 0 left, 1 centre, 2 right
+  const int32_t left = h == 0 ? x : h == 1 ? x - w / 2 : x - w;
+  if (left >= 0 && left + w <= W) return M5Canvas::drawString(s, x, y);
+  int32_t avail = (h == 0 ? W - x : h == 2 ? x : 2 * min(x, W - x)) - 1;
+  const int32_t dots = textWidth("..");
+  if (avail <= dots) return 0;
+  char buf[160];
+  size_t n = strnlen(s, sizeof buf - 3);
+  auto snap = [&](size_t m) {  // never cut a multi-byte UTF-8 character in half
+    while (m > 0 && ((uint8_t)s[m] & 0xC0) == 0x80) m--;
+    return m;
+  };
+  size_t lo = 0, hi = n;
+  while (lo < hi) {
+    size_t mid = (lo + hi + 1) / 2, m = snap(mid);
+    memcpy(buf, s, m);
+    buf[m] = 0;
+    if (textWidth(buf) + dots <= avail) lo = mid;
+    else hi = mid - 1;
+  }
+  size_t m = snap(lo);
+  while (m > 0 && s[m - 1] == ' ') m--;
+  memcpy(buf, s, m);
+  strcpy(buf + m, "..");
+  return M5Canvas::drawString(buf, x, y);
+}
+
+
 
 // ------------------------------------------------------------------ themes
 //                name       bg      panel   panel2  text    dim     faint   | ha      ai      lora    mesh    gps     ir      rf      portal  files   conf  | accent  style
 const Theme THEMES[] = {
-    {"Default", 0x0861, 0x10A3, 0x18E5, 0xEF7D, 0x8410, 0x3186, 0x3D7F, 0x5EDF, 0xB01F, 0x67F0, 0x07F0, 0xF8A6, 0xFD20, 0x07FF, 0xFEA0, 0x9CF3, 0x07FF, STYLE_PLAIN},
+    // Spore is the default: the house look. (faint lifted from 0x0140 - it was too dark to see on black.)
+    {"Spore", 0x0000, 0x0120, 0x01E0, 0xAFF5, 0x0480, 0x0300, 0x07E8, 0x5FEB, 0x07E0, 0x3FE6, 0x9FF3, 0x07C4, 0x67EC, 0x07E0, 0xB7F6, 0x05E0, 0x07E0, STYLE_SPORE},
+    // Amanita - the Deathcaps house theme: black, toxic green, red spots
+    {"Amanita", 0x0840, 0x0A82, 0x1324, 0xCFF8, 0x6D6C, 0x2282, 0x5FEB, 0x9FF3, 0xB81F, 0x5FE6, 0x07F0, 0xF980, 0xFD20, 0x5FE6, 0xCFE8, 0x8FF3, 0x5FE6, STYLE_PLAIN},
+    // Lava - molten floor, embers drifting up (see STYLE_EMBER in drawBackdrop)
+    {"Lava", 0x1000, 0x3000, 0x4920, 0xFFDF, 0xB3AB, 0x6180, 0xFD20, 0xFFE0, 0xFB2C, 0xFCA0, 0xFFA0, 0xF800, 0xFD60, 0xFEC0, 0xFE60, 0xC5A8, 0xFC00, STYLE_EMBER},
+    {"Classic", 0x0861, 0x10A3, 0x18E5, 0xEF7D, 0x8410, 0x3186, 0x3D7F, 0x5EDF, 0xB01F, 0x67F0, 0x07F0, 0xF8A6, 0xFD20, 0x07FF, 0xFEA0, 0x9CF3, 0x07FF, STYLE_PLAIN},
     {"Cyber", 0x0002, 0x1006, 0x2009, 0xDFFF, 0x8C7F, 0x3009, 0x07FF, 0xF81F, 0xF81F, 0x07FF, 0xFFE0, 0xF81F, 0xFFE0, 0x07FF, 0xFFE0, 0xB59F, 0xF81F, STYLE_SYNTHWAVE},
-    {"Matrix", 0x0000, 0x0120, 0x01E0, 0xAFF5, 0x0480, 0x0140, 0x07E8, 0x5FEB, 0x07E0, 0x3FE6, 0x9FF3, 0x07C4, 0x67EC, 0x07E0, 0xB7F6, 0x05E0, 0x07E0, STYLE_MATRIX},
     {"Amber", 0x0800, 0x2100, 0x3180, 0xFED0, 0xB3E0, 0x4200, 0xFDA0, 0xFE40, 0xFC60, 0xFDA0, 0xFE40, 0xFC60, 0xFDA0, 0xFE40, 0xFC60, 0xFDA0, 0xFD20, STYLE_CRT},
+    // Low Power - flat greys, no animated backdrop. Auto-engages when the battery is low (see lowPowerMode).
+    {"Low Power", 0x0000, 0x1082, 0x18C3, 0xC618, 0x8410, 0x4208, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xAD55, 0xC618, STYLE_PLAIN},
+    // Matrix - the digital rain, back as its own theme
+    {"Matrix", 0x0000, 0x0120, 0x01E0, 0xAFF5, 0x0480, 0x0300, 0x07E8, 0x5FEB, 0x07E0, 0x3FE6, 0x9FF3, 0x07C4, 0x67EC, 0x07E0, 0xB7F6, 0x05E0, 0x07E0, STYLE_MATRIX},
 };
 const int THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
 
@@ -19,7 +61,7 @@ void applyTheme(uint8_t idx) {
   col::TEXT = t.text; col::DIM = t.dim; col::FAINT = t.faint;
   col::HA = t.ha; col::AI = t.ai; col::LORA = t.lora; col::MESH = t.mesh; col::GPS = t.gps;
   col::IR = t.ir; col::RF = t.rf; col::PORTAL = t.portal; col::FILES = t.files; col::CONF = t.conf;
-  if (t.style == STYLE_MATRIX || t.style == STYLE_CRT) {  // monochrome themes keep status colours on-palette
+  if (t.style == STYLE_MATRIX || t.style == STYLE_SPORE || t.style == STYLE_CRT) {  // monochrome themes keep status colours on-palette
     col::OK = t.ha; col::WARN = t.rf; col::BAD = t.style == STYLE_CRT ? 0xF9A0 : 0xF8C3;
   } else {
     col::OK = 0x2FE6; col::WARN = 0xFE60; col::BAD = 0xF8C3;
@@ -134,6 +176,28 @@ String humanSize(uint64_t b) {
   return buf;
 }
 
+// ------------------------------------------------------------------ fit / contrast helpers
+// Nothing should ever run off a 240px screen. Truncate to fit the current font.
+String fitText(const String &s, int maxW) {
+  if (canvas.textWidth(s) <= maxW) return s;
+  String t = s;
+  while (t.length() > 1 && canvas.textWidth(t + "..") > maxW) t.remove(t.length() - 1);
+  return t + "..";
+}
+
+// Black or white, whichever is readable on `bg`. Keeps bubbles/rows legible in every theme.
+uint16_t textOn(uint16_t bg) {
+  int r = ((bg >> 11) & 0x1F) * 255 / 31, g = ((bg >> 5) & 0x3F) * 255 / 63, b = (bg & 0x1F) * 255 / 31;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 140 ? 0x0000 : 0xFFFF;
+}
+
+bool batteryCharging() {
+  // (int) cast keeps this working whether the core returns bool or an is_charging_t enum.
+  return (int)M5Cardputer.Power.isCharging() == 1;
+}
+
+bool lowPowerMode() { return M5Cardputer.Power.getBatteryLevel() <= 15 && !batteryCharging(); }
+
 // ------------------------------------------------------------------ status bar
 void drawBattery(LovyanGFX &g, int x, int y, int level, uint16_t c) {
   g.drawRoundRect(x, y, 18, 9, 2, c);
@@ -141,6 +205,10 @@ void drawBattery(LovyanGFX &g, int x, int y, int level, uint16_t c) {
   int w = constrain(level, 0, 100) * 14 / 100;
   uint16_t fill = level > 50 ? col::OK : level > 20 ? col::WARN : col::BAD;
   if (w > 0) g.fillRect(x + 2, y + 2, w, 5, fill);
+  if (batteryCharging()) {  // the cap's lightning bolt, striking the cell
+    g.fillTriangle(x + 11, y + 1, x + 6, y + 5, x + 9, y + 5, 0xFFE0);
+    g.fillTriangle(x + 8, y + 8, x + 13, y + 4, x + 10, y + 4, 0xFFE0);
+  }
 }
 
 void drawWifiGlyph(LovyanGFX &g, int x, int y, int bars, uint16_t c) {
@@ -157,11 +225,17 @@ void drawStatusBar(const char *title, uint16_t color) {
   canvas.setTextSize(1);
   canvas.setTextDatum(middle_left);
   canvas.setTextColor(col::TEXT);
-  canvas.drawString(timeValid() ? timeStr() : "--:--", 4, 7);
+  String clk = timeValid() ? timeStr() : "--:--";
+  canvas.drawString(clk, 4, 7);
+  if (devMode()) {  // live free-heap meter for the curious (placed after the clock so they never overlap)
+    uint32_t kb = ESP.getFreeHeap() / 1024;
+    canvas.setTextColor(kb < 40 ? col::BAD : kb < 80 ? col::WARN : col::OK);
+    canvas.drawString(String(kb) + "k", 4 + canvas.textWidth(clk) + 5, 7);
+  }
   if (title && *title) {
     canvas.setTextDatum(middle_center);
     canvas.setTextColor(color);
-    canvas.drawString(title, SCR_W / 2, 7);
+    canvas.drawString(fitText(title, 120), SCR_W / 2, 7);  // never overlap the clock or the icons
   }
   // right side icons, laid out right-to-left
   int x = SCR_W - 4;
@@ -358,19 +432,19 @@ int listMenu(const char *title, uint16_t color, std::vector<ListItem> &items, in
       }
       int tx = 9;
       if (it.icon != 255) {
-        drawIcon(canvas, it.icon, 17, y + rowH / 2, 13, on ? col::BG : ic, on ? ic : col::BG);
+        drawIcon(canvas, it.icon, 17, y + rowH / 2, 13, on ? textOn(ic) : ic, on ? ic : col::BG);
         tx = 29;
       }
       canvas.setFont(&fonts::Font2);
       canvas.setTextDatum(middle_left);
-      canvas.setTextColor(on ? col::BG : col::TEXT);
+      canvas.setTextColor(on ? textOn(ic) : col::TEXT);
       String label = it.label;
       int maxW = SCR_W - tx - 14 - (it.right.length() ? canvas.textWidth(it.right) + 6 : 0);
       while (label.length() > 1 && canvas.textWidth(label) > maxW) label.remove(label.length() - 1);
       canvas.drawString(label, tx, y + rowH / 2 + 1);
       if (it.right.length()) {
         canvas.setTextDatum(middle_right);
-        canvas.setTextColor(on ? col::BG : col::DIM);
+        canvas.setTextColor(on ? textOn(ic) : col::DIM);
         canvas.drawString(it.right, SCR_W - 14, y + rowH / 2 + 1);
       }
     }
@@ -498,11 +572,11 @@ void drawChatView(const char *title, uint16_t color, uint8_t icon, const std::ve
     int w = canvas.textWidth(lines[i].s);
     if (lines[i].me) {
       canvas.fillRoundRect(SCR_W - w - 14, y, w + 10, lh, 4, color);
-      canvas.setTextColor(col::BG);
+      canvas.setTextColor(textOn(color));  // auto-contrast: was col::BG, unreadable on some themes
       canvas.drawString(lines[i].s, SCR_W - w - 9, y);
     } else {
       canvas.fillRoundRect(4, y, w + 10, lh, 4, col::PANEL2);
-      canvas.setTextColor(col::TEXT);
+      canvas.setTextColor(textOn(col::PANEL2));
       canvas.drawString(lines[i].s, 9, y);
     }
   }
@@ -521,6 +595,6 @@ void drawChatView(const char *title, uint16_t color, uint8_t icon, const std::ve
     canvas.setFont(&fonts::Font0);
     canvas.setTextDatum(middle_right);
     canvas.setTextColor(statusColor);
-    canvas.drawString(status, SCR_W - 6, BAR_H + 9);
+    canvas.drawString(fitText(status, 120), SCR_W - 6, BAR_H + 9);
   }
 }

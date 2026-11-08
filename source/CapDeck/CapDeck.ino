@@ -5,6 +5,9 @@
 // =====================================================================
 #include "core.h"
 
+bool needsFirstRun();
+void firstRunWizard();
+
 struct App {
   const char *name;
   const char *sub;
@@ -18,9 +21,11 @@ static void runFiles() { appFiles("/"); }
 
 static const App APPS[] = {
     {"Home Assistant", "deck  -  talk  -  type", ICON_HA, &col::HA, appHomeAssistant},
+    {"Macros", "one tap, many actions", ICON_MACRO, &col::HA, appMacros},
     {"Local AI", "chat with your own model", ICON_AI, &col::AI, appAI},
+    {"Duck", "look anything up, no setup", ICON_DUCK, &col::AI, appDuck},
     {"LoRa", "chat  -  scanner  -  ping", ICON_LORA, &col::LORA, appLora},
-    {"Mesh", "Meshtastic nodes on a map", ICON_MESH, &col::MESH, appMesh},
+    {"Mycelium", "Meshtastic nodes on a map", ICON_MESH, &col::MESH, appMesh},
     {"GPS", "position  -  satellites", ICON_GPS, &col::GPS, appGps},
     {"Infrared", "Flipper .ir remotes", ICON_IR, &col::IR, appIR},
     {"RF 433", "receive  -  scope  -  replay", ICON_RF, &col::RF, appRF},
@@ -36,8 +41,107 @@ static uint16_t blend(uint16_t a, uint16_t b, float t) {  // t=1 -> a
   return ((int)(br + (ar - br) * t) << 11) | ((int)(bg + (ag - bg) * t) << 5) | (int)(bb + (ab - bb) * t);
 }
 
+// ---- Spore: living mycelium (hyphae grow in, nutrient pulses travel outward, spores drift up)
+static inline uint32_t hash32(uint32_t x) {  // deterministic noise, so wallpapers need no per-frame state
+  x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; x ^= x >> 16;
+  return x;
+}
+static inline float frand(uint32_t seed) { return (hash32(seed) & 0xFFFF) / 65535.0f; }
+namespace spore {
+struct Seg { int16_t x0, y0, x1, y1; uint8_t depth; int16_t parent; };
+static const int MAXSEG = 150;
+static Seg seg[MAXSEG];
+static int16_t kid[MAXSEG][2];
+static int nseg = 0;
+static uint32_t seed = 1;
+static uint32_t bornAt = 0;
+static uint32_t rnd() { seed = hash32(seed + 0x9E3779B9); return seed; }
+
+static void grow(float x, float y, float ang, int depth, int parent) {
+  if (nseg >= MAXSEG || depth > 10) return;
+  float len = 7 + rnd() % 8;
+  float nx = x + cosf(ang) * len, ny = y + sinf(ang) * len;
+  if (nx < -6 || nx > SCR_W + 6 || ny < BAR_H + 2 || ny > SCR_H + 6) return;
+  int me = nseg++;
+  seg[me] = {(int16_t)x, (int16_t)y, (int16_t)nx, (int16_t)ny, (uint8_t)depth, (int16_t)parent};
+  kid[me][0] = kid[me][1] = -1;
+  if (parent >= 0) kid[parent][kid[parent][0] < 0 ? 0 : 1] = me;
+  grow(nx, ny, ang + ((int)(rnd() % 41) - 20) * 0.0175f, depth + 1, me);
+  if (rnd() % 100 < 36 && (parent < 0 || kid[me][1] < 0))
+    grow(nx, ny, ang + ((rnd() & 1) ? 1 : -1) * (0.5f + (rnd() % 35) * 0.01f), depth + 1, me);
+}
+
+static void build() {
+  nseg = 0;
+  seed = esp_random();
+  const float roots[][3] = {{18, SCR_H + 2, -1.35f}, {74, SCR_H + 2, -1.75f}, {150, SCR_H + 2, -1.45f},
+                            {222, SCR_H + 2, -1.9f}, {-4, 70, -0.25f}, {SCR_W + 4, 58, 3.4f}};
+  for (auto &r : roots) grow(r[0], r[1], r[2], 0, -1);
+  bornAt = millis();
+}
+
+struct Pulse { int16_t s; float p; };
+static Pulse pulses[7];
+static uint32_t lastT = 0;
+
+static int randomRoot() {
+  for (int tries = 0; tries < 20; tries++) {
+    int i = rnd() % max(1, nseg);
+    if (seg[i].depth == 0) return i;
+  }
+  return 0;
+}
+
+void draw(uint32_t t) {
+  static uint8_t builtFor = 255;
+  if (!nseg || builtFor != cfg.theme) { build(); builtFor = cfg.theme; for (auto &p : pulses) { p.s = randomRoot(); p.p = frand(rnd()); } }
+  uint16_t thread = blend(col::DIM, col::BG, 0.55f);
+  uint16_t fresh = blend(col::TEXT, col::BG, 0.55f);
+  uint32_t age = t - bornAt;
+  for (int i = 0; i < nseg; i++) {
+    const Seg &s = seg[i];
+    int32_t start = s.depth * 170;
+    if ((int32_t)age < start) continue;
+    float f = min(1.0f, (age - start) / 170.0f);
+    int x1 = s.x0 + (s.x1 - s.x0) * f, y1 = s.y0 + (s.y1 - s.y0) * f;
+    canvas.drawLine(s.x0, s.y0, x1, y1, f < 1 ? fresh : thread);
+  }
+  // nutrient pulses flowing outward along the hyphae
+  float dt = lastT ? min((uint32_t)120, t - lastT) / 1000.0f : 0;
+  lastT = t;
+  if (age > 1900) {
+    uint16_t glow = blend(accent(), col::BG, 0.35f);
+    for (auto &p : pulses) {
+      const Seg &s = seg[p.s];
+      float len = max(1.0f, hypotf(s.x1 - s.x0, s.y1 - s.y0));
+      p.p += dt * 34.0f / len;
+      if (p.p >= 1) {
+        int next = kid[p.s][(rnd() & 1) && kid[p.s][1] >= 0 ? 1 : 0];
+        if (next < 0) { p.s = randomRoot(); p.p = 0; }
+        else { p.s = next; p.p -= 1; }
+        continue;
+      }
+      int x = s.x0 + (s.x1 - s.x0) * p.p, y = s.y0 + (s.y1 - s.y0) * p.p;
+      canvas.fillCircle(x, y, 2, glow);
+      canvas.drawPixel(x, y, accent());
+    }
+  }
+  // spores, drifting up and swaying
+  uint16_t sporeC = blend(col::TEXT, col::BG, 0.5f);
+  const int span = SCR_H - BAR_H;
+  for (int i = 0; i < 18; i++) {
+    float speed = 0.008f + frand(i * 7 + 1) * 0.012f;
+    int y = SCR_H - (int)((t * speed + frand(i * 7 + 2) * span)) % span;
+    int x = (int)(frand(i * 7 + 3) * SCR_W + 5 * sinf(t / 900.0f + i)) % SCR_W;
+    canvas.drawPixel(x, y, sporeC);
+    if (i % 3 == 0) canvas.drawPixel(x + 1, y, sporeC);
+  }
+}
+}  // namespace spore
+
 // theme-specific animated backgrounds behind the carousel
 static void drawBackdrop(uint32_t t) {
+  if (lowPowerMode()) return;  // low battery: flat background, no animation to feed
   switch (themeStyle()) {
     case STYLE_SYNTHWAVE: {  // neon horizon grid
       int hy = 88;
@@ -69,6 +173,29 @@ static void drawBackdrop(uint32_t t) {
       }
       break;
     }
+    case STYLE_EMBER: {  // molten floor with embers drifting up
+      for (int i = 0; i < 12; i++)
+        canvas.drawFastHLine(0, SCR_H - 1 - i, SCR_W, blend(0xFC00, col::BG, 1.0f - i / 12.0f));
+      for (int v = 0; v < 8; v++) {  // flickering vents
+        int h = 3 + ((t / 80 + v * 3) % 8);
+        canvas.drawFastVLine(12 + v * 31, SCR_H - h, h, 0xFDA0);
+      }
+      static uint8_t ex[24], ph[24];
+      static bool einit = false;
+      if (!einit) {
+        for (int i = 0; i < 24; i++) { ex[i] = esp_random() % 240; ph[i] = esp_random() % 120; }
+        einit = true;
+      }
+      const int span = SCR_H - BAR_H;
+      for (int i = 0; i < 24; i++) {
+        int y = SCR_H - 1 - ((ph[i] + t / 28) % span);
+        if (y < BAR_H + 2) continue;
+        int x = (ex[i] + ((t / 200 + i) % 5)) % SCR_W;
+        canvas.fillCircle(x, y, 1, y > 105 ? 0xFDC0 : y > 75 ? 0xFB20 : 0xA800);
+      }
+      break;
+    }
+    case STYLE_SPORE: spore::draw(t); break;
     case STYLE_CRT:  // scanlines
       for (int y = BAR_H; y < SCR_H; y += 3) canvas.drawFastHLine(0, y, SCR_W, 0x1000);
       break;
@@ -102,7 +229,8 @@ static void drawCarousel(float pos) {
   // name + subtitle
   canvas.setFont(&fonts::FreeSansBold12pt7b);
   canvas.setTextDatum(middle_center);
-  if (themeStyle() == STYLE_MATRIX) canvas.fillRect(0, 92, SCR_W, 32, col::BG);  // keep the rain off the title
+  if (themeStyle() == STYLE_MATRIX || themeStyle() == STYLE_EMBER)
+    canvas.fillRect(0, 92, SCR_W, 32, col::BG);  // keep the rain / embers off the title
   if (themeStyle() == STYLE_SYNTHWAVE) {  // chromatic split title
     canvas.setTextColor(0xF81F);
     canvas.drawString(a.name, SCR_W / 2 - 1, 104);
@@ -134,7 +262,8 @@ static void bootScreen() {
   auto draw = [&](int upto) {
     canvas.fillScreen(col::BG);
     for (int i = 0; i < APP_COUNT; i++)
-      drawIcon(canvas, APPS[i].icon, 13 + i * 23, 26, 20, i <= upto * 2 ? APPS[i].color() : col::FAINT);
+      drawIcon(canvas, APPS[i].icon, 12 + i * (SCR_W - 24) / (APP_COUNT - 1), 26, 18,
+               i <= upto * 2 ? APPS[i].color() : col::FAINT);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(middle_left);
     canvas.setTextColor(col::TEXT);
@@ -172,10 +301,12 @@ static void bootScreen() {
   draw(1);
 
   bool lora = loraInit();
-  steps[2].result = lora ? String(cfg.loraFreq, 1) + " MHz ok" : "not attached";
-  steps[2].color = lora ? col::OK : col::DIM;
+  bool rxDead = loraInitLog.indexOf("WARNING") >= 0;
+  steps[2].result = !lora ? "not attached" : rxDead ? "RX dead? see Radio test" : "ok  TCXO " + String(loraTcxoUsed, 1) + "V";
+  steps[2].color = !lora ? col::DIM : rxDead ? col::WARN : col::OK;
   Serial1.begin(115200, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
   meshLoad();
+  macroEnsureTemplate();
   draw(2);
 
   if (cfg.autoWifi && (cfg.wifiSsid.length() || cfg.extraWifi.size())) {
@@ -199,9 +330,11 @@ void setup() {
   loadSettings();
   applyTheme(cfg.theme);
   applyBrightness();
+  ledApply();
   M5Cardputer.Speaker.setVolume(cfg.volume);
   bootScreen();
   wakeScreen();
+  if (needsFirstRun()) firstRunWizard();
 }
 
 void loop() {
@@ -230,7 +363,7 @@ void loop() {
     if (fabsf(pos - target) < 0.02f) pos = target;
     drawCarousel(pos);
     lastDraw = millis();
-  } else if (millis() - lastDraw > (themeStyle() == STYLE_PLAIN ? 1000u : 60u)) {
+  } else if (millis() - lastDraw > (themeStyle() == STYLE_PLAIN || lowPowerMode() ? 1000u : 60u)) {
     drawCarousel(pos);
     lastDraw = millis();
   }

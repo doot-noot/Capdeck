@@ -195,6 +195,25 @@ static uint8_t iconForService(const HAButton &b) {
   return ICON_HA;
 }
 
+// Non-interactive HA calls for the Macros engine. Return "" on success or an error string.
+String haCallService(const String &service, const String &entity, const String &dataJson) {
+  int dot = service.indexOf('.');
+  if (dot < 0) return "service must look like light.toggle";
+  JsonDocument body;
+  if (dataJson.length()) deserializeJson(body, dataJson);
+  if (entity.length()) body["entity_id"] = entity;
+  String s;
+  serializeJson(body, s);
+  if (s == "null") s = "{}";
+  int code = haPost("/api/services/" + service.substring(0, dot) + "/" + service.substring(dot + 1), s);
+  return (code >= 200 && code < 300) ? "" : codeMeaning(code);
+}
+
+String haCallWebhook(const String &id) {
+  int code = haPost("/api/webhook/" + id, "{\"source\":\"capdeck\"}", nullptr, false);
+  return (code >= 200 && code < 300) ? "" : codeMeaning(code);
+}
+
 static bool fireButton(const HAButton &b, String &err) {
   int code;
   if (b.webhook.length()) {

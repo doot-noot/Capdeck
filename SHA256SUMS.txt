@@ -1,0 +1,4 @@
+3ec6c8563f237f6ac88574d0294cf0b7651e87bfd7b2a9dae907f9c88e3d376e  CapDeck.bin
+3ec6c8563f237f6ac88574d0294cf0b7651e87bfd7b2a9dae907f9c88e3d376e  firmware/CapDeck.bin
+421a96f7b950e67eb3082895c1af9e1507947ade5828797d174c7fd7bf74c5ae  firmware/CapDeck-v2.0.0-full-0x0.bin
+3ec6c8563f237f6ac88574d0294cf0b7651e87bfd7b2a9dae907f9c88e3d376e  sd_card/CapDeck.bin

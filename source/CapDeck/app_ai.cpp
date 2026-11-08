@@ -163,14 +163,29 @@ static const char *AI_HELP =
     "Easiest setup: open PORTAL on the Cardputer, join its Wi-Fi from your phone and edit everything "
     "there - or chat with the AI from the phone through the portal.";
 
+static const char *AI_SETUP =
+    "Local AI runs on YOUR computer, not on the Cardputer. CapDeck is just the keyboard and screen.\n\n"
+    "1. On a PC on the same Wi-Fi, install Ollama (ollama.com) or LM Studio.\n"
+    "2. Get a model: in a terminal, ollama pull llama3.2\n"
+    "3. Let other devices in:\n"
+    "   Ollama: set OLLAMA_HOST=0.0.0.0 then restart it\n"
+    "   LM Studio: Developer tab > Serve on local network\n"
+    "4. Find the PC's IP (Windows: ipconfig, look for IPv4).\n"
+    "5. Here, Server address = http://THAT-IP:11434 (Ollama) or :1234 (LM Studio).\n"
+    "6. Test connection. If it fails, allow the port through the PC's firewall.\n\n"
+    "Model: leave blank for the server default, or type e.g. llama3.2.";
+
 void appAI() {
   int sel = 0;
+  static bool hinted = false;
+  if (!cfg.aiUrl.length() && !hinted) { hinted = true; textViewer("Set up Local AI", AI_SETUP, col::AI); }
   while (true) {
     std::vector<ListItem> items = {{"Chat", history.size() ? String(history.size() / 2) + " turns" : "", ICON_AI, 0},
                                    {"Server address", cfg.aiUrl.length() ? cfg.aiUrl.substring(7) : "not set", ICON_WIFI, 0},
                                    {"Model", cfg.aiModel.length() ? cfg.aiModel : "default", ICON_CONF, 0},
                                    {"Test connection", "", ICON_SCAN, 0},
                                    {"New conversation", "", ICON_POWER, 0},
+                                   {"Setup guide", cfg.aiUrl.length() ? "" : "start here", ICON_INFO, cfg.aiUrl.length() ? (uint16_t)0 : col::WARN},
                                    {"Help", "", ICON_INFO, 0}};
     int r = listMenu("Local AI", col::AI, items, sel, ICON_AI);
     if (r < 0) return;
@@ -192,7 +207,8 @@ void appAI() {
         break;
       case 3: testServer(); break;
       case 4: history.clear(); toast("Cleared", col::OK, 600); break;
-      case 5: textViewer("Local AI help", AI_HELP, col::AI); break;
+      case 5: textViewer("Set up Local AI", AI_SETUP, col::AI); break;
+      case 6: textViewer("Local AI help", AI_HELP, col::AI); break;
     }
   }
 }

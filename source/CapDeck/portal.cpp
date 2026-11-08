@@ -259,6 +259,7 @@ static void routes() {
     f.print(body);
     f.close();
     loadConfigFile();
+    meshBuildChannels();
     loraApplyParams();
     server->send(200, "text/plain", "ok");
   });
